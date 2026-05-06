@@ -19,7 +19,7 @@ const apiKey = process.env.GEMINI_API_KEY;
 
 const genAI = new GoogleGenerativeAI(apiKey);
 const model = genAI.getGenerativeModel({ 
-    model: "gemini-2.0-flash", // MODELO ESTABLE
+    model: "gemini-1.5-flash", 
     generationConfig: { temperature: 0.7, maxOutputTokens: 1000 }
 });
 
@@ -35,7 +35,7 @@ const PDF_URL_CATALOGO = "https://www.one4cars.com/sevencorpweb/uploads/precios/
 // TU ID DE ADMINISTRADOR
 const ADMIN_ID = "228621243408492";
 
-// MENÚ COMPLETO RESTAURADO
+// MENÚ COMPLETO
 const MENU_TEXT = `📋 *MENÚ PRINCIPAL ONE4CARS*
 
 1️⃣ *Medios de pago:* https://www.one4cars.com/medios_de_pago.php/
@@ -91,7 +91,6 @@ const randomDelay = async () => {
     await sleep(ms);
 };
 
-// --- GESTIÓN DE HISTORIAL EN BASE DE DATOS ---
 async function guardarMensaje(tel, rol, contenido) {
     try {
         const conn = await db();
@@ -178,20 +177,22 @@ async function buscarCliente(rifLimpio) {
     return r[0] || null;
 }
 
-// BUSQUEDA MEJORADA EN tab_productos
+// BÚSQUEDA DE PRODUCTOS EN tab_productos
 async function buscarProductoPorTexto(texto) {
-    // Quitamos palabras comunes que ensucian la búsqueda
-    const stopWords = ['tienes', 'la', 'del', 'quiere', 'saber', 'cuanto', 'mide', 'venden', 'donde', 'precio'];
+    const stopWords = ['tienes', 'la', 'del', 'quiere', 'saber', 'cuanto', 'mide', 'venden', 'donde', 'precio', 'tienen', 'el', 'una', 'un', 'polea', 'corsa'];
     const palabras = normalizar(texto)
         .split(' ')
         .filter(p => p.length > 2 && !stopWords.includes(p));
+    
+    // Si el texto es corto pero contiene palabras clave, las mantenemos
+    const palabrasClave = normalizar(texto).split(' ').filter(p => p.length >= 3);
         
-    if (palabras.length === 0) return null;
+    if (palabrasClave.length === 0) return null;
 
     const conn = await db();
     let query = "SELECT producto, descripcion, tipo FROM tab_productos WHERE ";
-    let conditions = palabras.map(() => "descripcion LIKE ?").join(" AND ");
-    let params = palabras.map(p => `%${p}%`);
+    let conditions = palabrasClave.map(() => "descripcion LIKE ?").join(" AND ");
+    let params = palabrasClave.map(p => `%${p}%`);
 
     try {
         const [rows] = await conn.execute(query + conditions + " LIMIT 5", params);
@@ -259,14 +260,11 @@ async function startBot() {
         if (!msg.message) return;
 
         const from = msg.key.remoteJid;
-
-        // 🚫 1. FILTRO DE GRUPOS
         if (from === 'status@broadcast' || from.includes('@g.us')) return;
 
         const isAdmin = from.includes(ADMIN_ID);
         const vendedor = await buscarVendedor(from, msg.pushName || "Vendedor");
 
-        // 👤 2. DETECTAR SI EL HUMANO RESPONDE (DESACTIVAR BOT)
         if (msg.key.fromMe) {
             const textMe = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").toLowerCase();
             if (textMe === '!bot') {
@@ -283,39 +281,31 @@ async function startBot() {
         if (!rawText) return;
 
         const text = normalizar(rawText);
-        const rifDetectado = rawText.replace(/\D/g, '');
+        const soloNumeros = rawText.replace(/\s/g, ''); // Para detectar RIF puro
 
-        // GUARDAR EN HISTORIAL
         await guardarMensaje(from, 'user', rawText);
 
-        // VERIFICAR MODO DEL CHAT
         const sesion = await getSesion(from);
         if (sesion && sesion.modo === 'humano' && !isAdmin) return;
 
-        // ⭐ 3. LÓGICA DE ADMINISTRADOR MAESTRO
+        // --- 1. COMANDOS DE ADMINISTRADOR (EXACTOS) ---
         if (isAdmin) {
-            const fechaHora = new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' });
-            const saludoJefe = `⭐ *HOLA JEFE / ADMINISTRADOR*\n\nBienvenido de nuevo. Hoy es ${fechaHora}.\n\n*Tasas:* BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}\n\nUsted tiene acceso total. Puede enviar cualquier RIF para consultar el estado de cuenta de un cliente o escribir *menu* para ver las opciones del sistema.`;
-
             if (text === 'dolar') {
                 await actualizarDolar();
-                const dMsg = `💵 BCV: ${dolarInfo.bcv}\n📈 Paralelo: ${dolarInfo.paralelo}`;
-                return await sock.sendMessage(from, { text: dMsg });
+                return await sock.sendMessage(from, { text: `💵 BCV: ${dolarInfo.bcv}\n📈 Paralelo: ${dolarInfo.paralelo}` });
             }
             if (text === 'menu' || text === 'hola' || text === 'buen dia') {
-                return await sock.sendMessage(from, { text: saludoJefe });
+                return await sock.sendMessage(from, { text: `⭐ *MODO ADMINISTRADOR*\n\n${MENU_TEXT}` });
             }
-
-            // CONSULTA RIF ADMINISTRADOR (Solo link de Firmada)
-            if (rifDetectado.length >= 6 && /^\d+$/.test(rawText.replace(/\s/g, ''))) {
-                const c = await buscarCliente(rifDetectado);
+            // CONSULTA RIF (Solo si el mensaje es meramente numérico)
+            if (soloNumeros.length >= 6 && /^\d+$/.test(soloNumeros)) {
+                const c = await buscarCliente(soloNumeros);
                 if (c) {
                     const facturas = await obtenerDetalleFacturas(c.id_cliente);
                     let totalP = 0; 
                     let list = `⭐ *CONSULTA MASTER*\nCliente: ${c.nombres}\n\n`;
-                    
                     if (facturas.length === 0) {
-                        list += `✅ El cliente no tiene facturas pendientes.`;
+                        list += `✅ Sin facturas pendientes.`;
                     } else {
                         facturas.forEach(f => {
                             const monto = (f.total - f.abono_factura) / (f.porcentaje || 1);
@@ -331,16 +321,15 @@ async function startBot() {
             }
         }
 
-        // VENDEDOR
+        // --- 2. FLUJO VENDEDOR / CLIENTE (VINCULACIÓN) ---
         if (vendedor && (text === 'menu' || text === 'hola')) {
-            return await sock.sendMessage(from, { text: `👋 Hola Vendedor(a) *${vendedor.nombre}*.\n\n${MENU_TEXT}` });
+            return await sock.sendMessage(from, { text: `👋 Hola *${vendedor.nombre}*.\n\n${MENU_TEXT}` });
         }
 
-        // CLIENTE VINCULAR
-        if (rifDetectado.length >= 6 && (!sesion || !sesion.id_cliente_int || text.includes('rif')) && !isAdmin) {
-            const c = await buscarCliente(rifDetectado);
+        if (soloNumeros.length >= 6 && /^\d+$/.test(soloNumeros) && (!sesion || !sesion.id_cliente_int) && !isAdmin) {
+            const c = await buscarCliente(soloNumeros);
             if (c) {
-                await guardarUsuario(from, rifDetectado, c.id_cliente);
+                await guardarUsuario(from, soloNumeros, c.id_cliente);
                 return await sock.sendMessage(from, { text: `✅ ¡Hola *${c.nombres}*! RIF vinculado.\n\n${MENU_TEXT}` });
             }
         }
@@ -364,23 +353,21 @@ async function startBot() {
             return await sock.sendMessage(from, { text: listado });
         }
 
-        // 🤖 4. IA GEMINI CON BÚSQUEDA DE PRODUCTOS
+        // --- 3. LÓGICA DE IA Y BÚSQUEDA DE PRODUCTOS (PARA TODOS) ---
         try {
             const inst = fs.readFileSync('./instrucciones.txt', 'utf8');
             const historial = await obtenerHistorial(from);
             
-            // BUSCAR PRODUCTOS SIEMPRE QUE EL TEXTO SEA RELEVANTE (Mínimo 3 letras)
             let dataProductos = "";
-            if (text.length > 3 && !text.includes("saldo")) {
-                const results = await buscarProductoPorTexto(rawText);
-                if (results) {
-                    dataProductos = "\n\nRESULTADOS DE NUESTRO ALMACÉN (tab_productos):\n";
-                    results.forEach(p => {
-                        dataProductos += `- CÓDIGO: ${p.producto} | DESCRIPCIÓN: ${p.descripcion} | TIPO: ${p.tipo}\n`;
-                        dataProductos += `- LINK TÉCNICO: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}\n\n`;
-                    });
-                    dataProductos += "Usa estos datos para confirmar disponibilidad. Si preguntan medidas, léelas de la descripción. Envía siempre el LINK TÉCNICO correspondiente.";
-                }
+            // Buscamos productos si hay texto descriptivo
+            const prods = await buscarProductoPorTexto(rawText);
+            if (prods) {
+                dataProductos = "\n\nRESULTADOS EN TABLA PRODUCTOS:\n";
+                prods.forEach(p => {
+                    dataProductos += `- CÓDIGO: ${p.producto} | TIPO: ${p.tipo} | DESC: ${p.descripcion}\n`;
+                    dataProductos += `- LINK: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}\n\n`;
+                });
+                dataProductos += "Confirma al usuario que sí tenemos el producto y proporciónale el link técnico.";
             }
 
             const prompt = `INSTRUCCIONES:\n${inst}\n\nCONTEXTO:\nDólar BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}\nUsuario: ${pushName}${dataProductos}\n\nHISTORIAL:\n${historial}\n\nMENSAJE: ${rawText}`;
@@ -389,7 +376,7 @@ async function startBot() {
             const rIA = result.response.text();
             await guardarMensaje(from, 'model', rIA);
             await sock.sendMessage(from, { text: rIA });
-        } catch (e) { console.log("Error IA"); }
+        } catch (e) { console.log("Error en Gemini/Búsqueda"); }
     });
 }
 
@@ -423,7 +410,7 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify(clientes));
 
     } else if (parsedUrl.pathname === '/enviar-marketing' && req.method === 'POST') {
-        if (!isBotReady()) return res.end("⚠️ Bot no listo.");
+        if (!isBotReady()) return res.end("Bot no listo.");
         let b = ''; req.on('data', c => b += c);
         req.on('end', async () => {
             const data = JSON.parse(b);
@@ -436,20 +423,19 @@ const server = http.createServer(async (req, res) => {
                     const jid = formatWhatsApp(c.celular);
                     try {
                         if (data.tipo === 'precios') {
-                            await socketBot.sendMessage(jid, { document: { url: PDF_URL_CATALOGO }, fileName: 'Catalogo-ONE4CARS.pdf', mimetype: 'application/pdf', caption: `¡Hola *${c.nombres}*! Aquí tienes nuestro catálogo actualizado. 🚀` });
+                            await socketBot.sendMessage(jid, { document: { url: PDF_URL_CATALOGO }, fileName: 'Catalogo-ONE4CARS.pdf', mimetype: 'application/pdf', caption: `¡Hola *${c.nombres}*! Catálogo actualizado.` });
                         } else if (data.tipo === 'promo') {
-                            let msg = data.subtipo === 'bienvenida' ? `*🛠️ ¡Tu Negocio, al Máximo Nivel con ONE4CARS!*\n\n¡Hola *${c.nombres}*! 👋\n\nRecibe un cordial saludo de la gerencia de ventas de *ONE4CARS*.\n\n*🌐 Acceso a tu Portal Mayorista:*\n*Enlace:* https://one4cars.com/mayoristas\n*LOGIN:* ${c.usuario}\n*PASSWORD:* ${c.clave}\n\n*🚀 Tu página personalizada:*\n➡️ https://www.one4cars.com/${c.usuario}` : (data.subtipo === 'satisfaccion' ? `*📊 CONSULTA DE SATISFACCIÓN - ONE4CARS*\n\n¡Hola *${c.nombres}*! 👋\n\n¿Cómo ha sido tu experiencia con la calidad de nuestros productos?` : data.mensaje);
-                            await socketBot.sendMessage(jid, { text: msg });
+                            await socketBot.sendMessage(jid, { text: data.mensaje });
                         }
                         await randomDelay();
-                    } catch (e) { console.log("Error enviando"); }
+                    } catch (e) { console.log("Error envío masivo"); }
                 }
             }
             res.end("OK");
         });
 
     } else if (parsedUrl.pathname === '/enviar-cobranza' && req.method === 'POST') {
-        if (!isBotReady()) return res.end("⚠️ Bot no listo.");
+        if (!isBotReady()) return res.end("Bot no listo.");
         let b = ''; req.on('data', c => b += c);
         req.on('end', async () => {
             const data = JSON.parse(b);
@@ -463,7 +449,7 @@ const server = http.createServer(async (req, res) => {
                 for (const f of facturas) {
                     const jid = formatWhatsApp(f.celular);
                     const saldoBs = (f.total - f.abono_factura) / (f.porcentaje || 1);
-                    const msg = `Hola *${f.nombres}* 🚗, le recordamos su factura #${f.nro_factura} pendiente.\nSaldo: Bs. *${saldoBs.toLocaleString('es-VE')}*.\nPor favor gestione su pago.`;
+                    const msg = `Hola *${f.nombres}* 🚗, factura #${f.nro_factura} pendiente.\nSaldo: Bs. *${saldoBs.toLocaleString('es-VE')}*.\nPor favor gestione su pago.`;
                     await socketBot.sendMessage(jid, { text: msg });
                     await randomDelay();
                 }
