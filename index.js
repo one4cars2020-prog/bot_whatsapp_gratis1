@@ -277,7 +277,7 @@ async function startBot() {
         if (sesion && sesion.modo === 'humano' && !isAdmin) return;
 
         // ⭐ 3. LÓGICA DE ADMINISTRADOR MAESTRO (EL JEFE)
-        if (isAdmin) {
+ if (isAdmin) {
             const fechaHora = new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' });
             const saludoJefe = `⭐ *HOLA JEFE / ADMINISTRADOR*\n\nBienvenido de nuevo. Hoy es ${fechaHora}.\n\n*Tasas:* BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}\n\nUsted tiene acceso total. Puede enviar cualquier RIF para consultar el estado de cuenta de un cliente o escribir *menu* para ver las opciones del sistema.`;
 
@@ -289,26 +289,43 @@ async function startBot() {
             if (text === 'menu' || text === 'hola' || text === 'buen dia') {
                 return await sock.sendMessage(from, { text: saludoJefe });
             }
-            // Consulta RIF Master (El jefe ve todas las facturas de cualquier RIF con enlaces)
+
+            // Consulta RIF Master corregida
             if (rifDetectado.length >= 6 && /^\d+$/.test(rawText.replace(/\s/g, ''))) {
                 const c = await buscarCliente(rifDetectado);
                 if (c) {
                     const facturas = await obtenerDetalleFacturas(c.id_cliente);
-                    let totalP = 0; let list = `⭐ *CONSULTA MASTER*\nCliente: ${c.nombres}\n\n`;
-                    if (facturas.length === 0) list += `? *Total: $0.00*`;
-facturas.forEach(f => {
-    const monto = (f.total - f.abono_factura) / (f.porcentaje || 1);
-    totalP += monto;
-    const fReg = new Date(f.fecha_reg).toISOString().split('T')[0];
-    const params = `id_factura=${f.id_factura}&nro_factura=${f.nro_factura}&fecha_reg=${fReg}&total=${f.total}&abono_factura=${f.abono_factura}&nombres=${encodeURIComponent(f.nombres.trim())}&nombre=${encodeURIComponent(f.nombre_vendedor.trim())}&direccion=${encodeURIComponent(f.direccion.trim())}&cedula=${f.cedula.trim()}&celular=${encodeURIComponent(f.celular.trim())}&telefono=${encodeURIComponent(f.telefono.trim())}&id_cliente=${f.id_cliente}&zona=${encodeURIComponent(f.zona.trim())}&descuento=${f.descuento}&total_desc=${f.total_desc}`;
-    list += `🔸 *#${f.nro_factura}* | $${monto.toFixed(2)}\n✍️ Firmada: https://www.one4cars.com/sevencorpweb/uploads/notas/${f.nro_factura}.jpg\n\n`;
-});
-                    if (totalP > 0) list += `💰 *Total Máster: $${totalP.toFixed(2)}*`;
+                    let totalP = 0; 
+                    let list = `⭐ *CONSULTA MASTER*\nCliente: ${c.nombres}\n\n`;
+                    
+                    if (facturas.length === 0) {
+                        list += `✅ El cliente no tiene facturas pendientes.`;
+                    } else {
+                        facturas.forEach(f => {
+                            // Cálculo de monto según tu fórmula de porcentaje/tasa
+                            const monto = (f.total - f.abono_factura) / (f.porcentaje || 1);
+                            totalP += monto;
+                            
+                            const fReg = new Date(f.fecha_reg).toISOString().split('T')[0];
+                            
+                            // Aseguramos que los campos existan antes de encodeURIComponent para evitar errores
+                            const v_nom = (f.nombre_vendedor || "N/A").trim();
+                            const c_nom = (f.nombres || "N/A").trim();
+                            const c_dir = (f.direccion || "N/A").trim();
+                            const c_cel = (f.celular || "").trim();
+
+                            const params = `id_factura=${f.id_factura}&nro_factura=${f.nro_factura}&fecha_reg=${fReg}&total=${f.total}&abono_factura=${f.abono_factura}&nombres=${encodeURIComponent(c_nom)}&nombre=${encodeURIComponent(v_nom)}&direccion=${encodeURIComponent(c_dir)}&cedula=${f.cedula}&celular=${encodeURIComponent(c_cel)}&id_cliente=${f.id_cliente}&zona=${encodeURIComponent(f.zona || "")}&descuento=${f.descuento}&total_desc=${f.total_desc}`;
+                            
+                            list += `🔸 *#${f.nro_factura}* | $${monto.toFixed(2)}\n📄 Ver: https://one4cars.com/sevencorp/factura_full_reporte_web.php?${params}\n✍️ Firmada: https://www.one4cars.com/sevencorpweb/uploads/notas/${f.nro_factura}.jpg\n\n`;
+                        });
+                        list += `💰 *Total Máster: $${totalP.toFixed(2)}*`;
+                    }
                     return await sock.sendMessage(from, { text: list });
+                } else {
+                    return await sock.sendMessage(from, { text: "❌ No se encontró ningún cliente con ese RIF/Cédula." });
                 }
             }
         }
-
         // VENDEDOR
         if (vendedor && (text === 'menu' || text === 'hola')) {
             return await sock.sendMessage(from, { text: `👋 Hola Vendedor(a) *${vendedor.nombre}*.\n\n${MENU_TEXT}` });
