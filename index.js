@@ -177,14 +177,18 @@ async function buscarCliente(rifLimpio) {
     return r[0] || null;
 }
 
-// BÚSQUEDA DE PRODUCTOS (Optimizado con puntuación de palabras clave para evitar fallos por condiciones conversacionales)
+// BÚSQUEDA DE PRODUCTOS (Optimizada contra puntuación y variaciones conversacionales)
 async function buscarProductoPorTexto(texto) {
-    const txtNormal = normalizar(texto);
+    let txtNormal = normalizar(texto);
+    // Removemos cualquier signo de puntuación (?, !, ., ,, etc.) para limpiar palabras clave
+    txtNormal = txtNormal.replace(/[^a-z0-9\s]/g, ' ');
+    
     const stopWords = [
         'tienes', 'la', 'del', 'quiere', 'quiero', 'saber', 'cuanto', 'mide', 'venden', 'donde', 
         'precio', 'tienen', 'el', 'una', 'un', 'hay', 'por', 'favor', 'hola', 'buen', 'dia', 
         'buenas', 'tardes', 'me', 'podrias', 'decir', 'si', 'es', 'con', 'para', 'de', 'los', 'las',
-        'que', 'cual', 'o', 'y', 'en', 'tiene', 'tendran', 'medida', 'medidas', 'saben', 'existen'
+        'que', 'cual', 'o', 'y', 'en', 'tiene', 'tendran', 'medida', 'medidas', 'saben', 'existen',
+        'amigo', 'saludos', 'ayuda', 'info', 'informacion'
     ];
     
     const palabras = txtNormal.split(/\s+/)
@@ -194,18 +198,18 @@ async function buscarProductoPorTexto(texto) {
 
     const conn = await db();
     
-    // Generamos un query con un sistema de puntuación dinámico para priorizar los mejores aciertos
-    let selectScore = palabras.map(() => "IF(descripcion LIKE ?, 1, 0)").join(" + ");
+    // Generamos un query por puntuación de relevancia para evitar fallos si el usuario añade palabras de relleno
+    let scoreSelect = palabras.map(() => "IF(descripcion LIKE ?, 1, 0)").join(" + ");
     let conditions = palabras.map(() => "descripcion LIKE ?").join(" OR ");
     
-    let query = `SELECT producto, descripcion, tipo, (${selectScore}) as score 
+    let query = `SELECT producto, descripcion, tipo, (${scoreSelect}) as score 
                  FROM tab_productos 
                  WHERE ${conditions} 
                  ORDER BY score DESC 
                  LIMIT 5`;
 
     let params = [];
-    palabras.forEach(p => params.push(`%${p}%`)); // Parámetros para las cláusulas IF del selectScore
+    palabras.forEach(p => params.push(`%${p}%`)); // Parámetros para el select de puntuación
     palabras.forEach(p => params.push(`%${p}%`)); // Parámetros para las condiciones del WHERE
 
     try {
@@ -320,7 +324,7 @@ async function startBot() {
                         dataProductos += `- CÓDIGO (PRODUCTO): ${p.producto} | TIPO: ${p.tipo} | DESC: ${p.descripcion}\n`;
                         dataProductos += `- FICHA: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}\n\n`;
                     });
-                    dataProductos += "\nINSTRUCCIÓN ADICIONAL PARA LA IA: Responde de forma explícita al cliente sobre su consulta de producto. Analiza detenidamente el texto de las descripciones provistas arriba ya que allí se detallan las compatibilidades vehiculares, características (como si es lisa o acanalada) y medidas físicas (por ejemplo, expresiones como '70x26x17' indican las medidas). Si el cliente pregunta específicamente si es de un tipo o pide las medidas, extrae ese dato exacto de la descripción que te proveo, menciónalo en tu respuesta de forma clara y amable, y proporciona siempre el respectivo link de la ficha técnica.";
+                    dataProductos += "\nINSTRUCCIÓN ADICIONAL PARA LA IA EXTREMADAMENTE IMPORTANTE: Responde de forma explícita, directa y detallada sobre la consulta del cliente. Analiza detenidamente el texto de las descripciones del stock provistas arriba; en ellas se detalla si el producto es liso o acanalado y cuáles son sus medidas físicas exactas (por ejemplo, números combinados como '70x26x17' especifican las medidas). Debes extraer esta información y decírsela textualmente en tu respuesta de forma clara y profesional junto con el enlace exacto de su respectiva ficha técnica.";
                 }
 
                 const prompt = `INSTRUCCIONES:\n${inst}\n\nCONTEXTO:\nDólar BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}\nUsuario: ${pushName}${dataProductos}\n\nHISTORIAL:\n${historial}\n\nMENSAJE: ${rawText}`;
