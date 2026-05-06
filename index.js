@@ -20,7 +20,7 @@ const apiKey = process.env.GEMINI_API_KEY;
 const genAI = new GoogleGenerativeAI(apiKey);
 const model = genAI.getGenerativeModel({ 
     model: "gemini-1.5-flash", 
-    generationConfig: { temperature: 0.7, maxOutputTokens: 1000 }
+    generationConfig: { temperature: 0.3, maxOutputTokens: 1000 } // Temperatura baja para mayor precisión técnica
 });
 
 const dbConfig = {
@@ -177,43 +177,24 @@ async function buscarCliente(rifLimpio) {
     return r[0] || null;
 }
 
-// BÚSQUEDA DE PRODUCTOS (Optimizada contra puntuación y variaciones conversacionales)
+// BÚSQUEDA DE PRODUCTOS OPTIMIZADA
 async function buscarProductoPorTexto(texto) {
-    let txtNormal = normalizar(texto);
-    // Removemos cualquier signo de puntuación (?, !, ., ,, etc.) para limpiar palabras clave
-    txtNormal = txtNormal.replace(/[^a-z0-9\s]/g, ' ');
+    const txtNormal = normalizar(texto);
+    // Eliminamos palabras que no ayudan a filtrar en la DB pero dejamos "lisa" o "acanalada"
+    const stopWords = ['tienes', 'la', 'del', 'quiere', 'saber', 'cuanto', 'mide', 'venden', 'donde', 'precio', 'tienen', 'el', 'una', 'un', 'hay', 'si', 'es'];
     
-    const stopWords = [
-        'tienes', 'la', 'del', 'quiere', 'quiero', 'saber', 'cuanto', 'mide', 'venden', 'donde', 
-        'precio', 'tienen', 'el', 'una', 'un', 'hay', 'por', 'favor', 'hola', 'buen', 'dia', 
-        'buenas', 'tardes', 'me', 'podrias', 'decir', 'si', 'es', 'con', 'para', 'de', 'los', 'las',
-        'que', 'cual', 'o', 'y', 'en', 'tiene', 'tendran', 'medida', 'medidas', 'saben', 'existen',
-        'amigo', 'saludos', 'ayuda', 'info', 'informacion'
-    ];
-    
-    const palabras = txtNormal.split(/\s+/)
+    const palabras = txtNormal.split(' ')
         .filter(p => p.length > 2 && !stopWords.includes(p));
         
     if (palabras.length === 0) return null;
 
     const conn = await db();
-    
-    // Generamos un query por puntuación de relevancia para evitar fallos si el usuario añade palabras de relleno
-    let scoreSelect = palabras.map(() => "IF(descripcion LIKE ?, 1, 0)").join(" + ");
-    let conditions = palabras.map(() => "descripcion LIKE ?").join(" OR ");
-    
-    let query = `SELECT producto, descripcion, tipo, (${scoreSelect}) as score 
-                 FROM tab_productos 
-                 WHERE ${conditions} 
-                 ORDER BY score DESC 
-                 LIMIT 5`;
-
-    let params = [];
-    palabras.forEach(p => params.push(`%${p}%`)); // Parámetros para el select de puntuación
-    palabras.forEach(p => params.push(`%${p}%`)); // Parámetros para las condiciones del WHERE
+    let query = "SELECT producto, descripcion, tipo FROM tab_productos WHERE ";
+    let conditions = palabras.map(() => "descripcion LIKE ?").join(" AND ");
+    let params = palabras.map(p => `%${p}%`);
 
     try {
-        const [rows] = await conn.execute(query, params);
+        const [rows] = await conn.execute(query + conditions + " LIMIT 5", params);
         await conn.end();
         return rows.length > 0 ? rows : null;
     } catch (e) {
@@ -306,9 +287,9 @@ async function startBot() {
         const sesion = await getSesion(from);
         if (sesion && sesion.modo === 'humano' && !isAdmin) return;
 
-        // --- 1. LÓGICA DE PRODUCTOS (PRIORIDAD ALTA PARA TODOS, INCLUYENDO JEFE) ---
+        // --- 1. LÓGICA DE PRODUCTOS (Prioridad máxima) ---
         const esRIFPuro = soloNumeros.length >= 6 && /^\d+$/.test(soloNumeros);
-        const palabrasClaveProd = ["tienes", "hay", "polea", "corsa", "bomba", "filtro", "disponible", "precio", "mide", "medida", "medidas", "lisa", "acanalada", "cuanto", "buscar"];
+        const palabrasClaveProd = ["tienes", "hay", "polea", "corsa", "bomba", "filtro", "disponible", "precio", "mide", "medida", "lisa", "acanalada"];
         const pareceConsultaProd = palabrasClaveProd.some(p => text.includes(p));
 
         if (pareceConsultaProd && !esRIFPuro) {
@@ -319,20 +300,21 @@ async function startBot() {
                 const prods = await buscarProductoPorTexto(rawText);
                 
                 if (prods) {
-                    dataProductos = "\n\nSTOCK ENCONTRADO EN TABLA PRODUCTOS:\n";
+                    dataProductos = "\n\nINFORMACIÓN TÉCNICA DE PRODUCTOS ENCONTRADOS:\n";
                     prods.forEach(p => {
-                        dataProductos += `- CÓDIGO (PRODUCTO): ${p.producto} | TIPO: ${p.tipo} | DESC: ${p.descripcion}\n`;
-                        dataProductos += `- FICHA: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}\n\n`;
+                        dataProductos += `PRODUCTO_COD: ${p.producto} | TIPO: ${p.tipo} | DESCRIPCION_COMPLETA: ${p.descripcion}\n`;
+                        dataProductos += `LINK_FICHA: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}\n\n`;
                     });
-                    dataProductos += "\nINSTRUCCIÓN ADICIONAL PARA LA IA EXTREMADAMENTE IMPORTANTE: Responde de forma explícita, directa y detallada sobre la consulta del cliente. Analiza detenidamente el texto de las descripciones del stock provistas arriba; en ellas se detalla si el producto es liso o acanalado y cuáles son sus medidas físicas exactas (por ejemplo, números combinados como '70x26x17' especifican las medidas). Debes extraer esta información y decírsela textualmente en tu respuesta de forma clara y profesional junto con el enlace exacto de su respectiva ficha técnica.";
+                    dataProductos += `INSTRUCCIÓN CRÍTICA: Si el usuario pregunta por medidas (cuánto mide), si es lisa o acanalada, busca esa información exactamente en la 'DESCRIPCION_COMPLETA'. Responde de forma natural y SIEMPRE adjunta el LINK_FICHA correspondiente al producto.`;
                 }
 
-                const prompt = `INSTRUCCIONES:\n${inst}\n\nCONTEXTO:\nDólar BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}\nUsuario: ${pushName}${dataProductos}\n\nHISTORIAL:\n${historial}\n\nMENSAJE: ${rawText}`;
+                const prompt = `INSTRUCCIONES GENERALES:\n${inst}\n\nCONTEXTO ACTUAL:\nDólar BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}\nUsuario: ${pushName}${dataProductos}\n\nHISTORIAL DE CHAT:\n${historial}\n\nMENSAJE DEL CLIENTE: ${rawText}`;
+                
                 const result = await model.generateContent(prompt);
                 const rIA = result.response.text();
                 await guardarMensaje(from, 'model', rIA);
                 return await sock.sendMessage(from, { text: rIA });
-            } catch (e) { console.log("Error en búsqueda IA"); }
+            } catch (e) { console.log("Error en búsqueda IA:", e); }
         }
 
         // --- 2. COMANDOS DE ADMINISTRADOR ---
