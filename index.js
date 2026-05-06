@@ -244,8 +244,8 @@ async function startBot() {
         const sesion = await getSesion(from);
         if (sesion && sesion.modo === 'humano' && !isAdmin) return;
 
-        // --- PRIORIDAD 1: COMANDOS EXACTOS (MENU / DOLAR) ---
-        if (text === 'menu' || text === 'hola') {
+        // --- PRIORIDAD 1: COMANDOS EXACTOS (MENU / DOLAR / HOLA) ---
+        if (text === 'menu' || text === 'hola' || text === 'buen dia') {
             const m = isAdmin ? `⭐ *MODO ADMINISTRADOR*\n\n${MENU_TEXT}` : MENU_TEXT;
             return await sock.sendMessage(from, { text: m });
         }
@@ -298,19 +298,23 @@ async function startBot() {
             return await sock.sendMessage(from, { text: listado });
         }
 
-        // --- PRIORIDAD 4: IA Y PRODUCTOS (PARA TODOS, INCLUYENDO JEFE) ---
+        // --- PRIORIDAD 4: IA Y BÚSQUEDA DE PRODUCTOS (PARA TODOS) ---
         try {
             const inst = fs.readFileSync('./instrucciones.txt', 'utf8');
             const historial = await obtenerHistorial(from);
             let dataProductos = "";
             const prods = await buscarProductoPorTexto(rawText);
             if (prods) {
-                dataProductos = "\n\nSTOCK ENCONTRADO:\n";
+                dataProductos = "\n\nSTOCK ENCONTRADO EN TABLA PRODUCTOS:\n";
                 prods.forEach(p => {
-                    dataProductos += `- CÓDIGO: ${p.producto} | DESC: ${p.descripcion}\n- FICHA: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}\n\n`;
+                    dataProductos += `- CÓDIGO: ${p.producto} | TIPO: ${p.tipo} | DESC: ${p.descripcion}\n`;
+                    dataProductos += `- FICHA: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}\n\n`;
                 });
+                dataProductos += "Indica al usuario que el producto está disponible y dale el link técnico.";
             }
-            const prompt = `INSTRUCCIONES:\n${inst}\n\nCONTEXTO:\nDólar: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}\nUsuario: ${pushName}${dataProductos}\n\nHISTORIAL:\n${historial}\n\nMENSAJE: ${rawText}`;
+
+            const prompt = `INSTRUCCIONES:\n${inst}\n\nCONTEXTO:\nDólar BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}\nUsuario: ${pushName}${dataProductos}\n\nHISTORIAL:\n${historial}\n\nMENSAJE: ${rawText}`;
+            
             const result = await model.generateContent(prompt);
             const rIA = result.response.text();
             await guardarMensaje(from, 'model', rIA);
@@ -319,19 +323,100 @@ async function startBot() {
     });
 }
 
-// SERVIDOR HTTP
+// ===== SERVIDOR HTTP COMPLETO =====
 const server = http.createServer(async (req, res) => {
     const parsedUrl = url.parse(req.url, true);
     const header = `<nav class="navbar navbar-dark bg-dark mb-4 shadow"><div class="container"><a class="navbar-brand fw-bold" href="/">ONE4CARS ADMIN</a></div></nav>`;
+
     if (parsedUrl.pathname === '/cobranza') {
-        const v = await cobranza.obtenerVendedores(); const z = await cobranza.obtenerZonas(); const d = await cobranza.obtenerListaDeudores(parsedUrl.query);
+        const v = await cobranza.obtenerVendedores();
+        const z = await cobranza.obtenerZonas();
+        const d = await cobranza.obtenerListaDeudores(parsedUrl.query);
         res.end(await cobranza.generarHTML(v, z, d, header, parsedUrl.query));
+
     } else if (parsedUrl.pathname === '/marketing-panel') {
-        const v = await marketingModulo.obtenerVendedores(); const z = await marketingModulo.obtenerZonas(); const c = await marketingModulo.obtenerClientesMarketing(parsedUrl.query);
-        res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'}); res.end(await marketingModulo.generarHTMLMarketing(c, v, z, header, parsedUrl.query));
+        const v = await marketingModulo.obtenerVendedores();
+        const z = await marketingModulo.obtenerZonas();
+        const c = await marketingModulo.obtenerClientesMarketing(parsedUrl.query);
+        res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
+        res.end(await marketingModulo.generarHTMLMarketing(c, v, z, header, parsedUrl.query));
+
+    } else if (parsedUrl.pathname === '/enviar-marketing' && req.method === 'POST') {
+        if (!isBotReady()) return res.end("Bot no listo.");
+        let b = ''; req.on('data', c => b += c);
+        req.on('end', async () => {
+            const data = JSON.parse(b);
+            for (const id of data.clientes) {
+                const conn = await db();
+                const [rows] = await conn.execute("SELECT * FROM tab_clientes WHERE id_cliente=?", [id]);
+                await conn.end();
+                if (rows[0]) {
+                    const c = rows[0];
+                    const jid = formatWhatsApp(c.celular);
+                    try {
+                        if (data.tipo === 'precios') {
+                            await socketBot.sendMessage(jid, { document: { url: PDF_URL_CATALOGO }, fileName: 'Catalogo-ONE4CARS.pdf', mimetype: 'application/pdf', caption: `¡Hola *${c.nombres}*! Catálogo actualizado.` });
+                        } else if (data.tipo === 'promo') {
+                            await socketBot.sendMessage(jid, { text: data.mensaje });
+                        }
+                        await randomDelay();
+                    } catch (e) {}
+                }
+            }
+            res.end("OK");
+        });
+
+    } else if (parsedUrl.pathname === '/enviar-cobranza' && req.method === 'POST') {
+        if (!isBotReady()) return res.end("Bot no listo.");
+        let b = ''; req.on('data', c => b += c);
+        req.on('end', async () => {
+            const data = JSON.parse(b);
+            for (const id_cliente of data.facturas) {
+                const conn = await db();
+                const [facturas] = await conn.execute("SELECT f.nro_factura, f.total, f.abono_factura, c.nombres, c.celular FROM tab_facturas f JOIN tab_clientes c ON f.id_cliente = c.id_cliente WHERE f.id_cliente = ? AND f.pagada = 'NO' AND f.anulado = 'no'", [id_cliente]);
+                await conn.end();
+                for (const f of facturas) {
+                    const jid = formatWhatsApp(f.celular);
+                    const msg = `Hola *${f.nombres}* 🚗, tiene la factura #${f.nro_factura} pendiente. Por favor gestione su pago.`;
+                    await socketBot.sendMessage(jid, { text: msg });
+                    await randomDelay();
+                }
+            }
+            res.end("OK");
+        });
+
     } else {
-        res.end(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="30"><title>Admin ONE4CARS</title></head><body style="background-color: #f4f7f6;">${header}<div class="container text-center"><div class="card shadow-lg p-4 mx-auto" style="max-width: 500px; border-radius: 15px;"><h4 class="mb-3">Estado del Bot</h4><div class="my-4">${qrCodeData.startsWith('data') ? `<img src="${qrCodeData}" class="img-fluid rounded" style="max-width: 250px;">` : `<h2 class="text-success">${qrCodeData}</h2>`}</div><p>BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}</p><div class="d-grid gap-2"><a href="/cobranza" class="btn btn-primary">PANEL DE COBRANZA</a><a href="/marketing-panel" class="btn btn-info text-white">PANEL DE MARKETING</a></div></div></div></body></html>`);
+        res.end(`<!DOCTYPE html>
+        <html lang="es">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+            <meta http-equiv="refresh" content="30">
+            <title>Admin ONE4CARS</title>
+        </head>
+        <body style="background-color: #f4f7f6;">
+            ${header}
+            <div class="container text-center">
+                <div class="card shadow-lg p-4 mx-auto" style="max-width: 500px; border-radius: 15px;">
+                    <h4 class="mb-3">Estado del Bot</h4>
+                    <div class="my-4">
+                        ${qrCodeData.startsWith('data') ? `<img src="${qrCodeData}" class="img-fluid rounded" style="max-width: 250px;">` : `<h2 class="text-success">${qrCodeData}</h2>`}
+                    </div>
+                    <p>BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}</p>
+                    <div class="d-grid gap-2">
+                        <a href="/cobranza" class="btn btn-primary">PANEL DE COBRANZA</a>
+                        <a href="/marketing-panel" class="btn btn-info text-white">PANEL DE MARKETING</a>
+                    </div>
+                </div>
+            </div>
+        </body></html>`);
     }
 });
 
-server.listen(PORT, '0.0.0.0', async () => { await initDB(); startBot(); actualizarDolar(); setInterval(actualizarDolar, 3600000); });
+server.listen(PORT, '0.0.0.0', async () => {
+    await initDB();
+    startBot();
+    actualizarDolar();
+    setInterval(actualizarDolar, 3600000);
+});
