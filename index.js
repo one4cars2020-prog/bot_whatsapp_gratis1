@@ -161,7 +161,9 @@ async function guardarUsuario(jid, usuario, id_int) {
 }
 
 async function buscarCliente(rifLimpio) {
-    const [r] = await pool.execute("SELECT id_cliente, nombres, celular, cedula, direccion, zona FROM tab_clientes WHERE clave = ? OR clave LIKE ? LIMIT 1", [rifLimpio, `%${rifLimpio}%`]);
+    // Buscamos el RIF eliminando cualquier carácter no numérico para máxima compatibilidad
+    const soloNumeros = rifLimpio.replace(/\D/g, '');
+    const [r] = await pool.execute("SELECT id_cliente, nombres, celular, cedula, direccion, zona FROM tab_clientes WHERE clave = ? OR clave LIKE ? LIMIT 1", [soloNumeros, `%${soloNumeros}%`]);
     return r[0] || null;
 }
 
@@ -264,12 +266,10 @@ async function startBot() {
         if (msg.key.fromMe) {
             const textMe = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").toLowerCase();
             
-            // COMANDO PARA REACTIVAR EL BOT (Cualquier operador o el Jefe Admin puede usarlo)
             if (textMe === '!bot') {
                 await setModo(from, 'bot');
                 await safeSendMessage(from, { text: "🤖 *IA Reactivada:* El bot volverá a responder automáticamente en este chat." });
             } else if (!isAdmin) {
-                // Si el que escribe no es el Administrador Jefe, el bot se apaga para dar paso al humano
                 await setModo(from, 'humano');
             }
             return;
@@ -280,7 +280,10 @@ async function startBot() {
         if (!rawText) return;
 
         const text = normalizar(rawText);
-        const esRIFPuro = /^\d+$/.test(rawText.replace(/\s/g, '')) && rawText.length >= 6;
+        
+        // LÓGICA MEJORADA DE RIF: Detecta si hay al menos 6 números y no es un texto largo
+        const rifSoloNumeros = rawText.replace(/\D/g, '');
+        const esRIFPuro = rifSoloNumeros.length >= 6 && rawText.length <= 15;
 
         await guardarMensaje(from, 'user', rawText);
 
@@ -326,10 +329,8 @@ async function startBot() {
                         finalResponseText = emergencyMsg;
                     }
 
-                    // SOLUCIÓN: Enviar primero el texto y luego las imágenes de TODOS los productos encontrados
                     await safeSendMessage(from, { text: finalResponseText });
 
-                    // Limitamos a las primeras 3 imágenes para no saturar el chat
                     const imagenesAEnviar = prods.slice(0, 3);
                     for (const p of imagenesAEnviar) {
                         const imgUrl = `https://one4cars.com/imagen/${p.producto}.jpg`;
@@ -338,7 +339,7 @@ async function startBot() {
                                 image: { url: imgUrl }, 
                                 caption: `📦 *CÓDIGO: ${p.producto}*\n📝 ${p.descripcion}` 
                             });
-                            await sleep(1000); // Pequeña pausa entre imágenes
+                            await sleep(1000);
                         } catch (imgErr) {
                             console.log(`[MSG] ⚠️ Imagen no disponible para producto ${p.producto}`);
                         }
@@ -358,7 +359,7 @@ async function startBot() {
                 return await safeSendMessage(from, { text: `⭐ *MODO ADMINISTRADOR*\n\n${MENU_TEXT}` });
             }
             if (esRIFPuro) {
-                const c = await buscarCliente(rawText.replace(/\s/g, ''));
+                const c = await buscarCliente(rifSoloNumeros);
                 if (c) {
                     const facturas = await obtenerDetalleFacturas(c.id_cliente);
                     let totalP = 0; 
@@ -386,9 +387,9 @@ async function startBot() {
         }
 
         if (esRIFPuro && (!sesion || !sesion.id_cliente_int) && !isAdmin) {
-            const c = await buscarCliente(rawText.replace(/\s/g, ''));
+            const c = await buscarCliente(rifSoloNumeros);
             if (c) {
-                await guardarUsuario(from, rawText.replace(/\s/g, ''), c.id_cliente);
+                await guardarUsuario(from, rifSoloNumeros, c.id_cliente);
                 return await safeSendMessage(from, { text: `✅ ¡Hola *${c.nombres}*! RIF vinculado.\n\n${MENU_TEXT}` });
             }
         }
