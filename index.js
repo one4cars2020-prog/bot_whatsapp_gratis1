@@ -172,7 +172,6 @@ async function buscarProductoPorTexto(texto) {
         
     if (palabras.length === 0) return null;
 
-    // ACTUALIZADO: Ahora seleccionamos precio_final
     let query = "SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ";
     
     let conditions = palabras.map(() => "descripcion LIKE ?").join(" AND ");
@@ -306,28 +305,12 @@ async function startBot() {
 
                     const prompt = `INSTRUCCIONES:\n${inst}\n\nCONTEXTO:\nDólar BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}\nUsuario: ${pushName}${dataProductos}\n\nHISTORIAL:\n${historial}\n\nMENSAJE: ${rawText}`;
                     
+                    let finalResponseText = "";
+
                     try {
                         const result = await model.generateContent(prompt);
-                        const rIA = result.response.text();
-                        await guardarMensaje(from, 'model', rIA);
-
-                        // LÓGICA DE IMAGEN: Intentamos enviar la imagen del primer producto encontrado
-                        const firstProd = prods[0];
-                        const imgUrl = `https://one4cars.com/imagen/${firstProd.producto}.jpg`;
-                        
-                        try {
-                            // Enviamos la imagen con la respuesta de la IA como caption
-                            await socketBot.sendMessage(from, { 
-                                image: { url: imgUrl }, 
-                                caption: rIA 
-                            });
-                            console.log(`[MSG] ✅ Imagen y texto enviados a ${from}`);
-                        } catch (imgErr) {
-                            // Si la imagen no existe o falla, enviamos solo el texto
-                            console.log(`[MSG] ⚠️ Imagen no disponible, enviando solo texto.`);
-                            await safeSendMessage(from, { text: rIA });
-                        }
-                        return;
+                        finalResponseText = result.response.text();
+                        await guardarMensaje(from, 'model', finalResponseText);
                     } catch (aiError) {
                         console.log(`[IA] ❌ Error en Gemini, usando respuesta de emergencia...`);
                         let emergencyMsg = `✅ ¡Hola ${pushName}! Tenemos productos relacionados:\n\n`;
@@ -335,8 +318,24 @@ async function startBot() {
                             const precioLimpio = parseFloat(p.precio_final || 0).toFixed(2);
                             emergencyMsg += `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio Final: $${precioLimpio}*\n📝 ${p.descripcion}\n🔗 Ficha técnica: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}\n\n`;
                         });
-                        return await safeSendMessage(from, { text: emergencyMsg });
+                        finalResponseText = emergencyMsg;
                     }
+
+                    // LÓGICA DE IMAGEN (Ahora fuera de la IA, se ejecuta siempre que haya productos)
+                    const firstProd = prods[0];
+                    const imgUrl = `https://one4cars.com/imagen/${firstProd.producto}.jpg`;
+                    
+                    try {
+                        await socketBot.sendMessage(from, { 
+                            image: { url: imgUrl }, 
+                            caption: finalResponseText 
+                        });
+                        console.log(`[MSG] ✅ Imagen y texto enviados a ${from}`);
+                    } catch (imgErr) {
+                        console.log(`[MSG] ⚠️ Imagen no disponible o error, enviando solo texto.`);
+                        await safeSendMessage(from, { text: finalResponseText });
+                    }
+                    return;
                 }
             } catch (e) { console.log("Error en flujo de productos:", e); }
         }
