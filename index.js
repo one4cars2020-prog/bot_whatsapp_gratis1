@@ -1,3 +1,5 @@
+--- START OF FILE index (14).js ---
+
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode');
@@ -26,7 +28,9 @@ const pool = mysql.createPool({
 });
 
 const PDF_URL_CATALOGO = "https://www.one4cars.com/sevencorpweb/uploads/precios/Catalogo%20-%20ONE4CARS_compressed.pdf";
-const ADMIN_ID = "228621243408492";
+
+// MODIFICACIÓN 1: Lista de Administradores
+const ADMIN_IDS = ["228621243408492", "97899534934200"];
 
 const MENU_TEXT = `📋 *MENÚ PRINCIPAL ONE4CARS*
 
@@ -144,7 +148,12 @@ async function guardarUsuario(jid, usuario, id_int) {
 }
 
 async function buscarCliente(rifLimpio) {
-    const [r] = await pool.execute("SELECT id_cliente, nombres, celular, cedula, direccion, zona FROM tab_clientes WHERE clave = ? OR clave LIKE ? LIMIT 1", [rifLimpio, `%${rifLimpio}%`]);
+    // Buscamos por el RIF tal cual o solo los números para mayor flexibilidad
+    const soloNumeros = rifLimpio.replace(/\D/g, '');
+    const [r] = await pool.execute(
+        "SELECT id_cliente, nombres, celular, cedula, direccion, zona FROM tab_clientes WHERE clave = ? OR clave LIKE ? OR clave LIKE ? LIMIT 1", 
+        [rifLimpio, `%${rifLimpio}%`, `%${soloNumeros}%`]
+    );
     return r[0] || null;
 }
 
@@ -240,7 +249,8 @@ async function startBot() {
         const from = msg.key.remoteJid;
         if (from === 'status@broadcast' || from.includes('@g.us')) return;
 
-        const isAdmin = from.includes(ADMIN_ID);
+        // MODIFICACIÓN 2: Verificación de Administradores (si el ID está en la lista)
+        const isAdmin = ADMIN_IDS.some(id => from.includes(id));
         const vendedor = await buscarVendedor(from, msg.pushName || "Vendedor");
 
         if (msg.key.fromMe) {
@@ -259,7 +269,10 @@ async function startBot() {
         if (!rawText) return;
 
         const text = normalizar(rawText);
-        const esRIFPuro = /^\d+$/.test(rawText.replace(/\s/g, '')) && rawText.length >= 6;
+
+        // MODIFICACIÓN 3: Regex mejorado para RIF (Acepta J-123, J123, 123, V-123, etc)
+        // Explica: Empieza opcionalmente con una letra, opcionalmente un guión, y luego al menos 6 números.
+        const esRIFPuro = /^[VJGEP]?[- ]?\d{6,}$/i.test(rawText);
 
         await guardarMensaje(from, 'user', rawText);
 
@@ -271,7 +284,6 @@ async function startBot() {
             try {
                 const prods = await buscarProductoPorTexto(rawText);
                 if (prods) {
-                    // Construimos la respuesta general llamativa
                     let generalText = `✅ ¡Hola ${pushName}! Encontramos los siguientes productos relacionados:\n\n`;
                     
                     prods.forEach(p => {
@@ -279,13 +291,10 @@ async function startBot() {
                         generalText += `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio Final: $${precioLimpio}*\n📝 ${p.descripcion}\n🔗 Ficha: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}\n\n`;
                     });
 
-                    // Enviamos las imágenes una por una
                     for (let i = 0; i < prods.length; i++) {
                         const p = prods[i];
                         const imgUrl = `https://one4cars.com/imagen/${p.producto}.jpg`;
                         const precioLimpio = parseFloat(p.precio_final || 0).toFixed(2);
-                        
-                        // El primer producto lleva el texto general, los demás un resumen
                         const caption = (i === 0) 
                             ? generalText 
                             : `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio Final: $${precioLimpio}*`;
@@ -314,7 +323,7 @@ async function startBot() {
                 return await safeSendMessage(from, { text: `⭐ *MODO ADMINISTRADOR*\n\n${MENU_TEXT}` });
             }
             if (esRIFPuro) {
-                const c = await buscarCliente(rawText.replace(/\s/g, ''));
+                const c = await buscarCliente(rawText);
                 if (c) {
                     const facturas = await obtenerDetalleFacturas(c.id_cliente);
                     let totalP = 0; 
@@ -342,9 +351,9 @@ async function startBot() {
         }
 
         if (esRIFPuro && (!sesion || !sesion.id_cliente_int) && !isAdmin) {
-            const c = await buscarCliente(rawText.replace(/\s/g, ''));
+            const c = await buscarCliente(rawText);
             if (c) {
-                await guardarUsuario(from, rawText.replace(/\s/g, ''), c.id_cliente);
+                await guardarUsuario(from, rawText, c.id_cliente);
                 return await safeSendMessage(from, { text: `✅ ¡Hola *${c.nombres}*! RIF vinculado.\n\n${MENU_TEXT}` });
             }
         }
