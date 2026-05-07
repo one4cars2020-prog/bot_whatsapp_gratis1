@@ -172,7 +172,8 @@ async function buscarProductoPorTexto(texto) {
         
     if (palabras.length === 0) return null;
 
-    let query = "SELECT producto, descripcion, tipo, precio_minimo FROM tab_productos WHERE ";
+    // ACTUALIZADO: Ahora seleccionamos precio_final
+    let query = "SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ";
     
     let conditions = palabras.map(() => "descripcion LIKE ?").join(" AND ");
     let params = palabras.map(p => `%${p}%`);
@@ -193,7 +194,7 @@ async function buscarProductoPorTexto(texto) {
     }
 
     try {
-        const [rows] = await pool.execute("SELECT producto, descripcion, tipo, precio_minimo FROM tab_productos WHERE descripcion LIKE ? LIMIT 5", [`%${txtNormal}%`]);
+        const [rows] = await pool.execute("SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE descripcion LIKE ? LIMIT 5", [`%${txtNormal}%`]);
         if (rows.length > 0) return rows;
     } catch (e) {}
 
@@ -292,16 +293,15 @@ async function startBot() {
                     
                     let dataProductos = "\n\nDATOS REALES DE STOCK:\n";
                     prods.forEach(p => {
-                        // FORMATEO A 2 DECIMALES AQUÍ
-                        const precioLimpio = parseFloat(p.precio_minimo || 0).toFixed(2);
-                        dataProductos += `CÓDIGO: ${p.producto} | TIPO: ${p.tipo} | DESCRIPCIÓN: ${p.descripcion} | PRECIO MÍNIMO: $${precioLimpio} | LINK: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}\n`;
+                        const precioLimpio = parseFloat(p.precio_final || 0).toFixed(2);
+                        dataProductos += `CÓDIGO: ${p.producto} | TIPO: ${p.tipo} | DESCRIPCIÓN: ${p.descripcion} | PRECIO FINAL: $${precioLimpio} | LINK: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}\n`;
                     });
                     
                     dataProductos += `\n\n⚠️ REGLA OBLIGATORIA DE FORMATO:
-                    1. Debes decir si el producto está disponible.
-                    2. EL PRECIO DEBE SER LLAMATIVO. Usa este formato exacto: *💰 Precio: $XX.XX* (en negrita y con emoji).
+                    1. DEBES empezar la respuesta con el código de la pieza de forma muy llamativa. Ejemplo: *📦 CÓDIGO: [codigo]*
+                    2. EL PRECIO FINAL DEBE SER LLAMATIVO. Usa este formato exacto: *💰 Precio Final: $XX.XX* (en negrita y con emoji).
                     3. Usa solo 2 decimales para el precio.
-                    4. Si el producto tiene medidas, menciónalas.
+                    4. Luego indica si está disponible y menciona las medidas si existen en la descripción.
                     5. SIEMPRE termina con el LINK de la ficha técnica.`;
 
                     const prompt = `INSTRUCCIONES:\n${inst}\n\nCONTEXTO:\nDólar BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}\nUsuario: ${pushName}${dataProductos}\n\nHISTORIAL:\n${historial}\n\nMENSAJE: ${rawText}`;
@@ -310,13 +310,30 @@ async function startBot() {
                         const result = await model.generateContent(prompt);
                         const rIA = result.response.text();
                         await guardarMensaje(from, 'model', rIA);
-                        return await safeSendMessage(from, { text: rIA });
+
+                        // LÓGICA DE IMAGEN: Intentamos enviar la imagen del primer producto encontrado
+                        const firstProd = prods[0];
+                        const imgUrl = `https://one4cars.com/imagen/${firstProd.producto}.jpg`;
+                        
+                        try {
+                            // Enviamos la imagen con la respuesta de la IA como caption
+                            await socketBot.sendMessage(from, { 
+                                image: { url: imgUrl }, 
+                                caption: rIA 
+                            });
+                            console.log(`[MSG] ✅ Imagen y texto enviados a ${from}`);
+                        } catch (imgErr) {
+                            // Si la imagen no existe o falla, enviamos solo el texto
+                            console.log(`[MSG] ⚠️ Imagen no disponible, enviando solo texto.`);
+                            await safeSendMessage(from, { text: rIA });
+                        }
+                        return;
                     } catch (aiError) {
                         console.log(`[IA] ❌ Error en Gemini, usando respuesta de emergencia...`);
                         let emergencyMsg = `✅ ¡Hola ${pushName}! Tenemos productos relacionados:\n\n`;
                         prods.forEach(p => {
-                            const precioLimpio = parseFloat(p.precio_minimo || 0).toFixed(2);
-                            emergencyMsg += `📦 *${p.descripcion}*\n💰 *Precio: $${precioLimpio}*\n🔗 Ficha técnica: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}\n\n`;
+                            const precioLimpio = parseFloat(p.precio_final || 0).toFixed(2);
+                            emergencyMsg += `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio Final: $${precioLimpio}*\n📝 ${p.descripcion}\n🔗 Ficha técnica: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}\n\n`;
                         });
                         return await safeSendMessage(from, { text: emergencyMsg });
                     }
