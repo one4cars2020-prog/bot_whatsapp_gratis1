@@ -159,7 +159,6 @@ async function guardarUsuario(jid, usuario, id_int) {
 }
 
 async function buscarCliente(rifLimpio) {
-    // Buscamos el RIF eliminando cualquier carácter no numérico para máxima compatibilidad
     const soloNumeros = rifLimpio.replace(/\D/g, '');
     const [r] = await pool.execute("SELECT id_cliente, nombres, celular, cedula, direccion, zona FROM tab_clientes WHERE clave = ? OR clave LIKE ? LIMIT 1", [soloNumeros, `%${soloNumeros}%`]);
     return r[0] || null;
@@ -279,7 +278,6 @@ async function startBot() {
 
         const text = normalizar(rawText);
         
-        // LÓGICA MEJORADA DE RIF: Detecta si hay al menos 6 números y no es un texto largo
         const rifSoloNumeros = rawText.replace(/\D/g, '');
         const esRIFPuro = rifSoloNumeros.length >= 6 && rawText.length <= 15;
 
