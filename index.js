@@ -15,6 +15,9 @@ const marketingModulo = require('./marketing');
 // CONFIGURACION
 const PORT = process.env.PORT || 10000;
 
+// LISTA DE ADMINISTRADORES (Aquí agregué los dos IDs)
+const ADMIN_IDS = ["228621243408492", "97899534934200"];
+
 const pool = mysql.createPool({
     host: 'one4cars.com',
     user: 'juant200_one4car',
@@ -26,9 +29,6 @@ const pool = mysql.createPool({
 });
 
 const PDF_URL_CATALOGO = "https://www.one4cars.com/sevencorpweb/uploads/precios/Catalogo%20-%20ONE4CARS_compressed.pdf";
-
-// MODIFICACIÓN 1: Lista de Administradores
-const ADMIN_IDS = ["228621243408492", "97899534934200"];
 
 const MENU_TEXT = `📋 *MENÚ PRINCIPAL ONE4CARS*
 
@@ -57,6 +57,14 @@ function normalizar(texto) {
         .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?!]/g, "") 
         .toLowerCase()
         .trim();
+}
+
+function limpiarRIF(texto) {
+    return texto.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+}
+
+function soloNumerosRIF(texto) {
+    return texto.replace(/\D/g, '');
 }
 
 async function safeSendMessage(jid, content) {
@@ -146,11 +154,10 @@ async function guardarUsuario(jid, usuario, id_int) {
 }
 
 async function buscarCliente(rifLimpio) {
-    // Buscamos por el RIF tal cual o solo los números para mayor flexibilidad
-    const soloNumeros = rifLimpio.replace(/\D/g, '');
+    const soloNum = soloNumerosRIF(rifLimpio);
     const [r] = await pool.execute(
-        "SELECT id_cliente, nombres, celular, cedula, direccion, zona FROM tab_clientes WHERE clave = ? OR clave LIKE ? OR clave LIKE ? LIMIT 1", 
-        [rifLimpio, `%${rifLimpio}%`, `%${soloNumeros}%`]
+        "SELECT id_cliente, nombres, celular, cedula, direccion, zona FROM tab_clientes WHERE clave = ? OR clave = ? OR clave LIKE ? LIMIT 1", 
+        [rifLimpio, soloNum, `%${rifLimpio}%`]
     );
     return r[0] || null;
 }
@@ -247,7 +254,7 @@ async function startBot() {
         const from = msg.key.remoteJid;
         if (from === 'status@broadcast' || from.includes('@g.us')) return;
 
-        // MODIFICACIÓN 2: Verificación de Administradores (si el ID está en la lista)
+        // VERIFICACIÓN DE ADMINISTRADOR (Cualquiera de los dos IDs)
         const isAdmin = ADMIN_IDS.some(id => from.includes(id));
         const vendedor = await buscarVendedor(from, msg.pushName || "Vendedor");
 
@@ -267,18 +274,42 @@ async function startBot() {
         if (!rawText) return;
 
         const text = normalizar(rawText);
-
-        // MODIFICACIÓN 3: Regex mejorado para RIF (Acepta J-123, J123, 123, V-123, etc)
-        // Explica: Empieza opcionalmente con una letra, opcionalmente un guión, y luego al menos 6 números.
-        const esRIFPuro = /^[VJGEP]?[- ]?\d{6,}$/i.test(rawText);
+        const esRIFPuro = /^[vjgje]?\d+$/i.test(rawText.replace(/[^a-zA-Z0-9]/g, '')) && rawText.length >= 6;
 
         await guardarMensaje(from, 'user', rawText);
 
         const sesion = await getSesion(from);
         if (sesion && sesion.modo === 'humano' && !isAdmin) return;
 
-        // --- 1. LÓGICA DE PRODUCTOS (SIN API) ---
-        if (!esRIFPuro && text !== 'menu' && text !== 'hola') {
+        // --- 1. LÓGICA DE RIF (RESTRINGIDA SOLO A ADMINS) ---
+        if (isAdmin && esRIFPuro) {
+            const rifLimpio = limpiarRIF(rawText);
+            const c = await buscarCliente(rifLimpio);
+            if (c) {
+                await guardarUsuario(from, rifLimpio, c.id_cliente);
+                const facturas = await obtenerDetalleFacturas(c.id_cliente);
+                let totalP = 0; 
+                let list = `⭐ *CONSULTA DE ESTADO DE CUENTA (ADMIN)*\nCliente: ${c.nombres}\nRIF: ${rifLimpio}\n\n`;
+                
+                if (facturas.length === 0) {
+                    list += `✅ Sin facturas pendientes.`;
+                } else {
+                    facturas.forEach(f => {
+                        const monto = (f.total - f.abono_factura) / (f.porcentaje || 1);
+                        totalP += monto;
+                        list += `🔸 *#${f.nro_factura}* | $${monto.toFixed(2)}\n`;
+                        list += `✍️ Firmada: https://www.one4cars.com/uploads/notas/${f.nro_factura}.jpg\n\n`;
+                    });
+                    list += `💰 *TOTAL A PAGAR: $${totalP.toFixed(2)}*`;
+                }
+                return await safeSendMessage(from, { text: list });
+            } else {
+                return await safeSendMessage(from, { text: "❌ No se encontró ningún cliente con ese RIF." });
+            }
+        }
+
+        // --- 2. LÓGICA DE PRODUCTOS (Para todos) ---
+        if (text !== 'menu' && text !== 'hola') {
             try {
                 const prods = await buscarProductoPorTexto(rawText);
                 if (prods) {
@@ -293,15 +324,10 @@ async function startBot() {
                         const p = prods[i];
                         const imgUrl = `https://one4cars.com/imagen/${p.producto}.jpg`;
                         const precioLimpio = parseFloat(p.precio_final || 0).toFixed(2);
-                        const caption = (i === 0) 
-                            ? generalText 
-                            : `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio Final: $${precioLimpio}*`;
+                        const caption = (i === 0) ? generalText : `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio Final: $${precioLimpio}*`;
 
                         try {
-                            await socketBot.sendMessage(from, { 
-                                image: { url: imgUrl }, 
-                                caption: caption 
-                            });
+                            await socketBot.sendMessage(from, { image: { url: imgUrl }, caption: caption });
                         } catch (imgErr) {
                             if (i === 0) await safeSendMessage(from, { text: generalText });
                         }
@@ -311,7 +337,7 @@ async function startBot() {
             } catch (e) { console.log("Error en flujo de productos:", e); }
         }
 
-        // --- 2. COMANDOS DE ADMINISTRADOR ---
+        // --- 3. COMANDOS DE ADMINISTRADOR ---
         if (isAdmin) {
             if (text === 'dolar') {
                 await actualizarDolar();
@@ -320,40 +346,11 @@ async function startBot() {
             if (text === 'menu' || text === 'hola' || text === 'buen dia') {
                 return await safeSendMessage(from, { text: `⭐ *MODO ADMINISTRADOR*\n\n${MENU_TEXT}` });
             }
-            if (esRIFPuro) {
-                const c = await buscarCliente(rawText);
-                if (c) {
-                    const facturas = await obtenerDetalleFacturas(c.id_cliente);
-                    let totalP = 0; 
-                    let list = `⭐ *CONSULTA MASTER*\nCliente: ${c.nombres}\n\n`;
-                    if (facturas.length === 0) {
-                        list += `✅ Sin facturas pendientes.`;
-                    } else {
-                        facturas.forEach(f => {
-                            const monto = (f.total - f.abono_factura) / (f.porcentaje || 1);
-                            totalP += monto;
-                            list += `🔸 *#${f.nro_factura}* | $${monto.toFixed(2)}\n✍️ Firmada: https://www.one4cars.com/uploads/notas/${f.nro_factura}.jpg\n\n`;
-                        });
-                        list += `💰 *Total Máster: $${totalP.toFixed(2)}*`;
-                    }
-                    return await safeSendMessage(from, { text: list });
-                } else {
-                    return await safeSendMessage(from, { text: "❌ No se encontró cliente con ese RIF." });
-                }
-            }
         }
 
-        // --- 3. VENDEDOR / CLIENTE ---
+        // --- 4. VENDEDOR / CLIENTE ---
         if (vendedor && (text === 'menu' || text === 'hola')) {
             return await safeSendMessage(from, { text: `👋 Hola *${vendedor.nombre}*.\n\n${MENU_TEXT}` });
-        }
-
-        if (esRIFPuro && (!sesion || !sesion.id_cliente_int) && !isAdmin) {
-            const c = await buscarCliente(rawText);
-            if (c) {
-                await guardarUsuario(from, rawText, c.id_cliente);
-                return await safeSendMessage(from, { text: `✅ ¡Hola *${c.nombres}*! RIF vinculado.\n\n${MENU_TEXT}` });
-            }
         }
 
         if (text === 'menu') return await safeSendMessage(from, { text: MENU_TEXT });
@@ -375,8 +372,8 @@ async function startBot() {
             return await safeSendMessage(from, { text: listado });
         }
 
-        // --- 4. FALLBACK (Sin IA) ---
-        await safeSendMessage(from, { text: "No pude encontrar ese producto. Por favor, verifica la descripción o escribe *menu* para ver las opciones." });
+        // --- 5. FALLBACK ---
+        await safeSendMessage(from, { text: "No pude encontrar ese producto o comando. Por favor, verifica la descripción o escribe *menu* para ver las opciones." });
     });
 }
 
