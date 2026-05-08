@@ -15,8 +15,8 @@ const marketingModulo = require('./marketing');
 // CONFIGURACION
 const PORT = process.env.PORT || 10000;
 
-// LISTA DE ADMINISTRADORES (Aquí agregué los dos IDs)
-const ADMIN_IDS = ["228621243408492", "97899534934200"];
+// LISTA DE ADMINISTRADORES (Los 3 IDs autorizados)
+const ADMIN_IDS = ["228621243408492", "97899534934200", "250370957778958"];
 
 const pool = mysql.createPool({
     host: 'one4cars.com',
@@ -254,7 +254,7 @@ async function startBot() {
         const from = msg.key.remoteJid;
         if (from === 'status@broadcast' || from.includes('@g.us')) return;
 
-        // VERIFICACIÓN DE ADMINISTRADOR (Cualquiera de los dos IDs)
+        // VERIFICACIÓN DE ADMINISTRADOR (Cualquiera de los IDs en la lista)
         const isAdmin = ADMIN_IDS.some(id => from.includes(id));
         const vendedor = await buscarVendedor(from, msg.pushName || "Vendedor");
 
