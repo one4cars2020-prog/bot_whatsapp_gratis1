@@ -28,7 +28,7 @@ const notificador = require('./notificador_local');
 const PORT = process.env.PORT || 10000;
 
 // LISTA DE ADMINISTRADORES (Los 3 IDs autorizados)
-const ADMIN_IDS = ["228621243408492", "97899534934200", "584142531553", "250370957778958"];
+const ADMIN_IDS = ["228621243408492", "97899534934200", "584142531553", "250370957778958", "244362214650069", "60305753296939", "1924162162820", "39058600415402", "58381658247238"];   
 
 const pool = mysql.createPool({
     host: 'one4cars.com',
