@@ -10,7 +10,8 @@ const axios = require('axios');
 
 // MODULOS EXTERNOS
 const cobranza = require('./cobranza');
-const marketingModulo = require('./marketing'); 
+const marketingModulo = require('./marketing');
+const notificador = require('./notificador_local');
 
 // CONFIGURACION
 const PORT = process.env.PORT || 10000;
@@ -220,6 +221,27 @@ async function actualizarDolar() {
     } catch (e) { console.log("Error Dolar API"); }
 }
 
+// ===== NOTIFICADOR DE FACTURAS NUEVAS =====
+async function checkNuevasFacturas() {
+    if (!isBotReady()) return;
+    try {
+        const facturas = await notificador.obtenerFacturasNoNotificadas();
+        for (const f of facturas) {
+            const jid = formatWhatsApp(f.celular);
+            if (!jid) continue;
+            const msg = `🧾 *NUEVA FACTURA REGISTRADA*\n\nHola *${f.nombres}*, se ha registrado una nueva factura en nuestro sistema:\n\n🔹 *N°:* ${f.nro_factura}\n🔹 *Monto:* $${parseFloat(f.total).toFixed(2)}\n🔹 *Fecha:* ${f.fecha_reg}\n\nPuede consultar su estado de cuenta en:\nhttps://www.one4cars.com/estado_de_cuenta.php/`;
+            await safeSendMessage(jid, { text: msg });
+            await notificador.marcarNotificada(f.id_factura);
+            await randomDelay();
+        }
+        if (facturas.length > 0) {
+            console.log(`[NOTIFICADOR] ${facturas.length} factura(s) notificada(s).`);
+        }
+    } catch (e) {
+        console.log("[NOTIFICADOR] Error:", e.message);
+    }
+}
+
 // ===== BOT WHATSAPP =====
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
@@ -239,7 +261,11 @@ async function startBot() {
     sock.ev.on('connection.update', (u) => {
         const { connection, lastDisconnect, qr } = u;
         if (qr) qrcode.toDataURL(qr, { scale: 10 }, (_, url) => qrCodeData = url);
-        if (connection === 'open') { qrCodeData = "ONLINE ✅"; console.log("🚀 BOT MASTER ONLINE"); }
+        if (connection === 'open') { 
+            qrCodeData = "ONLINE ✅"; 
+            console.log("🚀 BOT MASTER ONLINE");
+            setInterval(checkNuevasFacturas, 45000);
+        }
         if (connection === 'close') {
             const r = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
             if (r) startBot();
@@ -443,6 +469,28 @@ const server = http.createServer(async (req, res) => {
             }
             res.end("OK");
         });
+    } else if (parsedUrl.pathname === '/notificador-estado') {
+        const total = await notificador.obtenerFacturasNoNotificadasCount();
+        res.end(`<!DOCTYPE html>
+        <html lang="es">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+            <title>Notificador - ONE4CARS</title>
+        </head>
+        <body class="bg-light">
+            ${header}
+            <div class="container mt-5">
+                <div class="card shadow-lg p-4 mx-auto" style="max-width: 600px; border-radius: 15px;">
+                    <h3 class="mb-3">📬 Notificador de Facturas</h3>
+                    <hr>
+                    <p>Facturas pendientes por notificar: <strong>${total}</strong></p>
+                    <p>Estado del Bot: ${isBotReady() ? '<span class="text-success">🟢 Online</span>' : '<span class="text-danger">🔴 Offline</span>'}</p>
+                    <p class="text-muted small mt-3">El sistema verifica cada 45 segundos si hay nuevas facturas sin notificar.</p>
+                </div>
+            </div>
+        </body></html>`);
     } else {
         res.end(`<!DOCTYPE html>
         <html lang="es">
@@ -465,6 +513,7 @@ const server = http.createServer(async (req, res) => {
                     <div class="d-grid gap-2">
                         <a href="/cobranza" class="btn btn-primary">PANEL DE COBRANZA</a>
                         <a href="/marketing-panel" class="btn btn-info text-white">PANEL DE MARKETING</a>
+                        <a href="/notificador-estado" class="btn btn-secondary text-white">NOTIFICADOR</a>
                     </div>
                 </div>
             </div>
