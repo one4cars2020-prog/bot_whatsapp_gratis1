@@ -174,36 +174,59 @@ async function buscarCliente(rifLimpio) {
 
 async function buscarProductoPorTexto(texto) {
     const txtNormal = normalizar(texto);
-    const stopWords = ['tienes', 'la', 'del', 'quiere', 'saber', 'cuanto', 'mide', 'venden', 'donde', 'precio', 'tienen', 'el', 'una', 'un', 'hay', 'si', 'es', 'de', 'con', 'para', 'busco'];
-    
+    const stopWords = [
+        'tienes', 'la', 'del', 'quiere', 'saber', 'cuanto', 'mide', 'venden', 'donde',
+        'precio', 'tienen', 'el', 'una', 'un', 'hay', 'si', 'es', 'de', 'con', 'para',
+        'busco', 'hola', 'buenos', 'buenas', 'dias', 'tardes', 'noches', 'como', 'estas',
+        'esta', 'familia', 'espero', 'encuentres', 'encuenters', 'bien', 'queria',
+        'preguntarte', 'gracias', 'por', 'favor', 'ayuda', 'puedes', 'podrias',
+        'quisiera', 'necesito', 'saludos', 'cordial', 'muchas', 'todo', 'bienvenidos',
+        'bendiciones', 'exito', 'exitos', 'dia', 'tarde', 'noche', 'pregunta', 'consulta',
+        'atento', 'atenta', 'saludo', 'estimados', 'estimado', 'buen', 'buena', 'bueno',
+        'se', 'me', 'le', 'te', 'lo', 'los', 'las', 'les', 'su', 'sus', 'mi', 'mis',
+        'tu', 'tus', 'nos', 'os', 'que', 'cual', 'cuales', 'quien', 'quienes',
+        'cuando', 'porque', 'pues', 'pero', 'mas', 'muy', 'asi', 'aun', 'entre', 'sin',
+        'sobre', 'tras', 'durante', 'mediante', 'excepto', 'segun', 'puede', 'puedo',
+        'pueden', 'podemos', 'podria', 'hacer', 'hace', 'hacen', 'ser', 'estar', 'tener',
+        'tengo', 'tenemos', 'tiene', 'decir', 'dice', 'dicen', 'digo', 'ver', 'veo',
+        'ven', 'vez', 'veces', 'quiero', 'quiere', 'quieren', 'queremos', 'gustaria',
+        'gusta', 'gustan', 'gusto', 'necesita', 'necesitan', 'necesitamos', 'pueda',
+        'puedas', 'pudiera', 'pudieras', 'listo', 'claro', 'ok', 'okey', 'vale', 'va',
+        'vamos', 'vaya', 'algun', 'alguna', 'algunos', 'algunas', 'ningun', 'ninguna',
+        'tipo', 'tipos', 'preguntar', 'disculpa', 'disculpe', 'permiso', 'ayudar',
+        'apoyo', 'consulta', 'consultar', 'info', 'informacion', 'decirme', 'dime',
+        'avísame', 'avisa', 'saber', 'sabes', 'saben', 'sabemos'
+    ];
+
     const palabras = txtNormal.split(' ')
         .filter(p => p.length > 2 && !stopWords.includes(p));
-        
+
     if (palabras.length === 0) return null;
 
-    let query = "SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ";
-    let conditions = palabras.map(() => "descripcion LIKE ?").join(" AND ");
-    let params = palabras.map(p => `%${p}%`);
-    
-    try {
-        const [rows] = await pool.execute(query + conditions + " LIMIT 5", params);
-        if (rows.length > 0) return rows;
-    } catch (e) { console.log("Error SQL 1:", e); }
+    const queryBase = "SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ";
+    const vistos = new Set();
 
-    if (palabras.length > 2) {
-        const pFlex = palabras.slice(0, 2);
-        const cFlex = pFlex.map(() => "descripcion LIKE ?").join(" AND ");
-        const vFlex = pFlex.map(p => `%${p}%`);
-        try {
-            const [rows] = await pool.execute(query + cFlex + " LIMIT 5", vFlex);
-            if (rows.length > 0) return rows;
-        } catch (e) {}
-    }
-
+    // 1. Intentar con TODAS las palabras juntas (AND)
+    const allAnd = palabras.map(() => "descripcion LIKE ?").join(" AND ");
     try {
-        const [rows] = await pool.execute("SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE descripcion LIKE ? LIMIT 5", [`%${txtNormal}%`]);
+        const [rows] = await pool.execute(queryBase + allAnd + " LIMIT 8", palabras.map(p => `%${p}%`));
         if (rows.length > 0) return rows;
     } catch (e) {}
+
+    // 2. Buscar CADA palabra individualmente y combinar resultados
+    const todos = [];
+    for (const p of palabras) {
+        try {
+            const [rows] = await pool.execute(queryBase + "descripcion LIKE ? LIMIT 5", [`%${p}%`]);
+            for (const r of rows) {
+                if (!vistos.has(r.producto)) {
+                    vistos.add(r.producto);
+                    todos.push(r);
+                }
+            }
+        } catch (e) {}
+    }
+    if (todos.length > 0) return todos.slice(0, 8);
 
     return null;
 }
@@ -367,23 +390,14 @@ async function startBot() {
             try {
                 const prods = await buscarProductoPorTexto(rawText);
                 if (prods) {
-                    let generalText = `✅ ¡Hola ${pushName}! Encontramos los siguientes productos relacionados:\n\n`;
-                    
-                    prods.forEach(p => {
+                    for (const p of prods) {
                         const precioLimpio = parseFloat(p.precio_final || 0).toFixed(2);
-                        generalText += `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio Final: $${precioLimpio}*\n📝 ${p.descripcion}\n🔗 Ficha: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}\n\n`;
-                    });
-
-                    for (let i = 0; i < prods.length; i++) {
-                        const p = prods[i];
+                        const caption = `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio Final: $${precioLimpio}*\n📝 ${p.descripcion}\n🔗 Ficha: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}`;
                         const imgUrl = `https://one4cars.com/imagen/${p.producto}.jpg`;
-                        const precioLimpio = parseFloat(p.precio_final || 0).toFixed(2);
-                        const caption = (i === 0) ? generalText : `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio Final: $${precioLimpio}*`;
-
                         try {
                             await socketBot.sendMessage(from, { image: { url: imgUrl }, caption: caption });
                         } catch (imgErr) {
-                            if (i === 0) await safeSendMessage(from, { text: generalText });
+                            await safeSendMessage(from, { text: caption });
                         }
                     }
                     return;
