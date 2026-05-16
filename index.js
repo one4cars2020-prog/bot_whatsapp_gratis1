@@ -1,22 +1,21 @@
-const { default: makeWASocket, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode');
 const http = require('http');
+const url = require('url');
 const pino = require('pino');
 const fs = require('fs');
 const mysql = require('mysql2/promise');
 const axios = require('axios');
-const crypto = require('crypto');
 
 // MODULOS EXTERNOS
 const cobranza = require('./cobranza');
 const marketingModulo = require('./marketing'); 
-const notificador = require('./notificador'); // <--- Módulo de notificaciones
 
 // CONFIGURACION
 const PORT = process.env.PORT || 10000;
 
-// LISTA DE ADMINISTRADORES (Los 4 IDs autorizados)
+// LISTA DE ADMINISTRADORES (Los 3 IDs autorizados)
 const ADMIN_IDS = ["228621243408492", "97899534934200", "584142531553", "250370957778958"];
 
 const pool = mysql.createPool({
@@ -48,83 +47,6 @@ _Escriba el número de la opción o su consulta directamente._`;
 let qrCodeData = "Iniciando...";
 let socketBot = null;
 let dolarInfo = { bcv: 'Cargando...', paralelo: 'Cargando...' };
-
-// ==========================================================================
-// FUNCIÓN AUXILIAR PARA CREDENCIALES (PARA EVITAR EL ERROR initCreds)
-// ==========================================================================
-function getInitialCreds() {
-    return {
-        noiseKey: crypto.generateKeyPairSync('curve25519', { publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } }),
-        signedIdentityKey: crypto.generateKeyPairSync('curve25519', { publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } }),
-        signedPreKey: { keyPair: crypto.generateKeyPairSync('curve25519', { publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } }), signature: Buffer.alloc(64), keyId: 1 },
-        registrationId: Math.floor(Math.random() * 10000),
-        advSecretKey: crypto.randomBytes(32).toString('base64'),
-        nextPreKeyId: 1,
-        firstUnackedPreKeyId: 1,
-        serverHasPreKey: false,
-        accountSyncCounter: 0,
-        accountSettings: { unarchiveChats: false },
-        registered: false,
-        registration: {},
-        pairingCode: undefined,
-        lastPropHash: undefined,
-        hasAccountSignature: false,
-    };
-}
-
-// ==========================================================================
-// GESTIÓN DE SESIÓN EN MYSQL
-// ==========================================================================
-async function useMySQLAuthState(pool) {
-    const loadCreds = async () => {
-        try {
-            const [rows] = await pool.execute("SELECT data FROM whatsapp_session WHERE id = 'session_main'");
-            if (rows.length > 0 && rows[0].data) {
-                return JSON.parse(rows[0].data);
-            }
-        } catch (e) {
-            console.log("Error cargando sesión de DB, creando nueva.");
-        }
-        // Intentar usar initCreds de la librería si está disponible, sino el fallback manual
-        const Baileys = require('@whiskeysockets/baileys');
-        return Baileys.initCreds ? Baileys.initCreds() : getInitialCreds();
-    };
-
-    const saveCreds = async (creds) => {
-        await pool.execute(
-            "INSERT INTO whatsapp_session (id, data) VALUES ('session_main', ?) ON DUPLICATE KEY UPDATE data = VALUES(data)", 
-            [JSON.stringify(creds)]
-        );
-    };
-
-    return {
-        state: { 
-            creds: await loadCreds(), 
-            keys: { 
-                get: async (type, ids) => {
-                    const data = {};
-                    for (const id of ids) {
-                        const [rows] = await pool.execute("SELECT value FROM whatsapp_keys WHERE id = ?", [`${type}:${id}`]);
-                        if (rows.length > 0) data[id] = JSON.parse(rows[0].value);
-                    }
-                    return data;
-                }, 
-                set: async (data) => {
-                    for (const type in data) {
-                        for (const id in data[type]) {
-                            const value = JSON.stringify(data[type][id]);
-                            await pool.execute(
-                                "INSERT INTO whatsapp_keys (id, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)", 
-                                [`${type}:${id}`, value]
-                            );
-                        }
-                    }
-                } 
-            } 
-        },
-        saveCreds
-    };
-}
 
 // ===== FUNCIONES DE APOYO =====
 
@@ -213,9 +135,6 @@ async function initDB() {
             contenido TEXT, 
             fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci`);
-
-        await pool.execute(`CREATE TABLE IF NOT EXISTS whatsapp_session (id VARCHAR(255) PRIMARY KEY, data JSON)`);
-        await pool.execute(`CREATE TABLE IF NOT EXISTS whatsapp_keys (id VARCHAR(255) PRIMARY KEY, value JSON)`);
         
         console.log("✅ Base de Datos vinculada.");
     } catch (e) { console.log("❌ Error DB Init:", e.message); }
@@ -303,14 +222,14 @@ async function actualizarDolar() {
 
 // ===== BOT WHATSAPP =====
 async function startBot() {
-    const { state, saveCreds } = await useMySQLAuthState(pool);
+    const { state, saveCreds } = await useMultiFileAuthState('auth_info');
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
         version,
         auth: state,
         logger: pino({ level: 'silent' }),
-        printQRInTerminal: true,
+        printQRInTerminal: false,
         browser: ["ONE4CARS MASTER", "Chrome", "1.0.0"]
     });
 
@@ -320,12 +239,7 @@ async function startBot() {
     sock.ev.on('connection.update', (u) => {
         const { connection, lastDisconnect, qr } = u;
         if (qr) qrcode.toDataURL(qr, { scale: 10 }, (_, url) => qrCodeData = url);
-        if (connection === 'open') { 
-            qrCodeData = "ONLINE ✅"; 
-            console.log("🚀 BOT MASTER ONLINE"); 
-            notificador.procesarFacturas(sock, pool); 
-            setInterval(() => notificador.procesarFacturas(sock, pool), notificador.INTERVALO_REVISION);
-        }
+        if (connection === 'open') { qrCodeData = "ONLINE ✅"; console.log("🚀 BOT MASTER ONLINE"); }
         if (connection === 'close') {
             const r = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
             if (r) startBot();
@@ -340,6 +254,7 @@ async function startBot() {
         const from = msg.key.remoteJid;
         if (from === 'status@broadcast' || from.includes('@g.us')) return;
 
+        // VERIFICACIÓN DE ADMINISTRADOR (Cualquiera de los IDs en la lista)
         const isAdmin = ADMIN_IDS.some(id => from.includes(id));
         const vendedor = await buscarVendedor(from, msg.pushName || "Vendedor");
 
@@ -366,6 +281,7 @@ async function startBot() {
         const sesion = await getSesion(from);
         if (sesion && sesion.modo === 'humano' && !isAdmin) return;
 
+        // --- 1. LÓGICA DE RIF (RESTRINGIDA SOLO A ADMINS) ---
         if (isAdmin && esRIFPuro) {
             const rifLimpio = limpiarRIF(rawText);
             const c = await buscarCliente(rifLimpio);
@@ -392,6 +308,7 @@ async function startBot() {
             }
         }
 
+        // --- 2. LÓGICA DE PRODUCTOS (Para todos) ---
         if (text !== 'menu' && text !== 'hola') {
             try {
                 const prods = await buscarProductoPorTexto(rawText);
@@ -420,6 +337,7 @@ async function startBot() {
             } catch (e) { console.log("Error en flujo de productos:", e); }
         }
 
+        // --- 3. COMANDOS DE ADMINISTRADOR ---
         if (isAdmin) {
             if (text === 'dolar') {
                 await actualizarDolar();
@@ -430,6 +348,7 @@ async function startBot() {
             }
         }
 
+        // --- 4. VENDEDOR / CLIENTE ---
         if (vendedor && (text === 'menu' || text === 'hola')) {
             return await safeSendMessage(from, { text: `👋 Hola *${vendedor.nombre}*.\n\n${MENU_TEXT}` });
         }
@@ -453,36 +372,36 @@ async function startBot() {
             return await safeSendMessage(from, { text: listado });
         }
 
+        // --- 5. FALLBACK ---
         await safeSendMessage(from, { text: "No pude encontrar ese producto o comando. Por favor, verifica la descripción o escribe *menu* para ver las opciones." });
     });
 }
 
 // ===== SERVIDOR HTTP =====
 const server = http.createServer(async (req, res) => {
-    const reqUrl = new URL(req.url, `http://${req.headers.host}`);
-    const query = Object.fromEntries(reqUrl.searchParams);
+    const parsedUrl = url.parse(req.url, true);
     const header = `<nav class="navbar navbar-dark bg-dark mb-4 shadow"><div class="container"><a class="navbar-brand fw-bold" href="/">ONE4CARS ADMIN</a></div></nav>`;
 
-    if (reqUrl.pathname === '/cobranza') {
+    if (parsedUrl.pathname === '/cobranza') {
         const v = await cobranza.obtenerVendedores();
         const z = await cobranza.obtenerZonas();
-        const d = await cobranza.obtenerListaDeudores(query);
-        res.end(await cobranza.generarHTML(v, z, d, header, query));
-    } else if (reqUrl.pathname === '/marketing-panel') {
+        const d = await cobranza.obtenerListaDeudores(parsedUrl.query);
+        res.end(await cobranza.generarHTML(v, z, d, header, parsedUrl.query));
+    } else if (parsedUrl.pathname === '/marketing-panel') {
         const v = await marketingModulo.obtenerVendedores();
         const z = await marketingModulo.obtenerZonas();
-        const c = await marketingModulo.obtenerClientesMarketing(query);
+        const c = await marketingModulo.obtenerClientesMarketing(parsedUrl.query);
         res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
-        res.end(await marketingModulo.generarHTMLMarketing(c, v, z, header, query));
-    } else if (reqUrl.pathname === '/marketing-preview') {
+        res.end(await marketingModulo.generarHTMLMarketing(c, v, z, header, parsedUrl.query));
+    } else if (parsedUrl.pathname === '/marketing-preview') {
         let sql = "SELECT id_cliente, nombres, celular FROM tab_clientes WHERE celular IS NOT NULL AND celular != ''";
         const params = [];
-        if (query.vendedor) { sql += " AND vendedor = ?"; params.push(query.vendedor); }
-        if (query.zona) { sql += " AND zona = ?"; params.push(query.zona); }
+        if (parsedUrl.query.vendedor) { sql += " AND vendedor = ?"; params.push(parsedUrl.query.vendedor); }
+        if (parsedUrl.query.zona) { sql += " AND zona = ?"; params.push(parsedUrl.query.zona); }
         const [clientes] = await pool.execute(sql, params);
         res.writeHead(200, {'Content-Type': 'application/json'});
         res.end(JSON.stringify(clientes));
-    } else if (reqUrl.pathname === '/enviar-marketing' && req.method === 'POST') {
+    } else if (parsedUrl.pathname === '/enviar-marketing' && req.method === 'POST') {
         if (!isBotReady()) return res.end("Bot no listo.");
         let b = ''; req.on('data', c => b += c);
         req.on('end', async () => {
@@ -504,7 +423,7 @@ const server = http.createServer(async (req, res) => {
             }
             res.end("OK");
         });
-    } else if (reqUrl.pathname === '/enviar-cobranza' && req.method === 'POST') {
+    } else if (parsedUrl.pathname === '/enviar-cobranza' && req.method === 'POST') {
         if (!isBotReady()) return res.end("Bot no listo.");
         let b = ''; req.on('data', c => b += c);
         req.on('end', async () => {
