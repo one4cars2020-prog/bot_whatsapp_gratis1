@@ -8,6 +8,14 @@ const fs = require('fs');
 const mysql = require('mysql2/promise');
 const axios = require('axios');
 
+// CAPTURA GLOBAL DE ERRORES EVITA QUE EL BOT MUERA
+process.on('unhandledRejection', (err) => {
+    console.log("[UNHANDLED] Error no capturado:", err?.message || err);
+});
+process.on('uncaughtException', (err) => {
+    console.log("[UNCAUGHT] Error crítico:", err?.message || err);
+});
+
 // MODULOS EXTERNOS
 const cobranza = require('./cobranza');
 const marketingModulo = require('./marketing');
@@ -281,6 +289,7 @@ async function startBot() {
     });
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        try {
         if (type !== 'notify') return;
         const msg = messages[0];
         if (!msg.message) return;
@@ -408,6 +417,7 @@ async function startBot() {
 
         // --- 5. FALLBACK ---
         await safeSendMessage(from, { text: "No pude encontrar ese producto o comando. Por favor, verifica la descripción o escribe *menu* para ver las opciones." });
+        } catch (e) { console.log("[MSG] Error en handler de mensajes:", e.message); }
     });
 }
 
