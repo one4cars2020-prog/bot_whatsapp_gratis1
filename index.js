@@ -1,4 +1,4 @@
-const { default: makeWASocket, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, DisconnectReason, fetchLatestBaileysVersion, initCreds } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode');
 const http = require('http');
@@ -50,32 +50,52 @@ let socketBot = null;
 let dolarInfo = { bcv: 'Cargando...', paralelo: 'Cargando...' };
 
 // ==========================================================================
-// INSERTADO: GESTIÓN DE SESIÓN EN MYSQL (Sustituye a useMultiFileAuthState)
+// GESTIÓN DE SESIÓN EN MYSQL (CORREGIDO PARA EVITAR EL ERROR 'me')
 // ==========================================================================
 async function useMySQLAuthState(pool) {
     const loadCreds = async () => {
-        const [rows] = await pool.execute("SELECT data FROM whatsapp_session WHERE id = 'session_main'");
-        return rows.length > 0 ? JSON.parse(rows[0].data) : null;
+        try {
+            const [rows] = await pool.execute("SELECT data FROM whatsapp_session WHERE id = 'session_main'");
+            if (rows.length > 0 && rows[0].data) {
+                return JSON.parse(rows[0].data);
+            }
+        } catch (e) {
+            console.log("Error cargando credenciales:", e.message);
+        }
+        return initCreds(); // Retorna credenciales iniciales si no hay nada en la DB
     };
+
     const saveCreds = async (creds) => {
         await pool.execute(
             "INSERT INTO whatsapp_session (id, data) VALUES ('session_main', ?) ON DUPLICATE KEY UPDATE data = VALUES(data)", 
             [JSON.stringify(creds)]
         );
     };
+
     return {
         state: { 
             creds: await loadCreds(), 
             keys: { 
                 get: async (type, ids) => {
-                    const [rows] = await pool.execute("SELECT value FROM whatsapp_keys WHERE id = ?", [`${type}:${ids}`]);
-                    return rows.length > 0 ? JSON.parse(rows[0].value) : null;
+                    const data = {};
+                    for (const id of ids) {
+                        const [rows] = await pool.execute("SELECT value FROM whatsapp_keys WHERE id = ?", [`${type}:${id}`]);
+                        if (rows.length > 0) {
+                            data[id] = JSON.parse(rows[0].value);
+                        }
+                    }
+                    return data;
                 }, 
-                set: async (type, ids, value) => {
-                    await pool.execute(
-                        "INSERT INTO whatsapp_keys (id, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)", 
-                        [`${type}:${ids}`, JSON.stringify(value)]
-                    );
+                set: async (data) => {
+                    for (const type in data) {
+                        for (const id in data[type]) {
+                            const value = JSON.stringify(data[type][id]);
+                            await pool.execute(
+                                "INSERT INTO whatsapp_keys (id, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)", 
+                                [`${type}:${id}`, value]
+                            );
+                        }
+                    }
                 } 
             } 
         },
@@ -84,7 +104,7 @@ async function useMySQLAuthState(pool) {
 }
 // ==========================================================================
 
-// ===== FUNCIONES DE APOYO (MANTENIDAS EXACTAMENTE IGUAL) =====
+// ===== FUNCIONES DE APOYO =====
 
 function normalizar(texto) {
     return texto
@@ -153,7 +173,7 @@ async function buscarVendedor(jid, pushName) {
     return r[0] || null;
 }
 
-// ===== BASE DE DATOS (MANTENIDAS EXACTAMENTE IGUAL) =====
+// ===== BASE DE DATOS =====
 async function initDB() {
     try {
         await pool.execute(`CREATE TABLE IF NOT EXISTS control_chat (
@@ -171,6 +191,16 @@ async function initDB() {
             contenido TEXT, 
             fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci`);
+
+        await pool.execute(`CREATE TABLE IF NOT EXISTS whatsapp_session (
+            id VARCHAR(255) PRIMARY KEY,
+            data JSON
+        )`);
+        
+        await pool.execute(`CREATE TABLE IF NOT EXISTS whatsapp_keys (
+            id VARCHAR(255) PRIMARY KEY,
+            value JSON
+        )`);
         
         console.log("✅ Base de Datos vinculada.");
     } catch (e) { console.log("❌ Error DB Init:", e.message); }
@@ -258,7 +288,6 @@ async function actualizarDolar() {
 
 // ===== BOT WHATSAPP =====
 async function startBot() {
-    // CAMBIO: Usamos la sesión de MySQL en lugar de archivos locales
     const { state, saveCreds } = await useMySQLAuthState(pool);
     const { version } = await fetchLatestBaileysVersion();
 
@@ -284,9 +313,8 @@ async function startBot() {
             // INSERTADO: INICIO DEL NOTIFICADOR AUTOMÁTICO
             // ==========================================
             console.log("⏰ Iniciando ciclo de notificaciones automáticas...");
-            notificador.procesarFacturas(sock, pool); // Ejecución inmediata
+            notificador.procesarFacturas(sock, pool); 
             setInterval(() => notificador.procesarFacturas(sock, pool), notificador.INTERVALO_REVISION);
-            // ==========================================
         }
         if (connection === 'close') {
             const r = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
@@ -302,7 +330,6 @@ async function startBot() {
         const from = msg.key.remoteJid;
         if (from === 'status@broadcast' || from.includes('@g.us')) return;
 
-        // VERIFICACIÓN DE ADMINISTRADOR (Cualquiera de los IDs en la lista)
         const isAdmin = ADMIN_IDS.some(id => from.includes(id));
         const vendedor = await buscarVendedor(from, msg.pushName || "Vendedor");
 
@@ -329,7 +356,6 @@ async function startBot() {
         const sesion = await getSesion(from);
         if (sesion && sesion.modo === 'humano' && !isAdmin) return;
 
-        // --- 1. LÓGICA DE RIF (RESTRINGIDA SOLO A ADMINS) ---
         if (isAdmin && esRIFPuro) {
             const rifLimpio = limpiarRIF(rawText);
             const c = await buscarCliente(rifLimpio);
@@ -356,7 +382,6 @@ async function startBot() {
             }
         }
 
-        // --- 2. LÓGICA DE PRODUCTOS (Para todos) ---
         if (text !== 'menu' && text !== 'hola') {
             try {
                 const prods = await buscarProductoPorTexto(rawText);
@@ -385,7 +410,6 @@ async function startBot() {
             } catch (e) { console.log("Error en flujo de productos:", e); }
         }
 
-        // --- 3. COMANDOS DE ADMINISTRADOR ---
         if (isAdmin) {
             if (text === 'dolar') {
                 await actualizarDolar();
@@ -396,7 +420,6 @@ async function startBot() {
             }
         }
 
-        // --- 4. VENDEDOR / CLIENTE ---
         if (vendedor && (text === 'menu' || text === 'hola')) {
             return await safeSendMessage(from, { text: `👋 Hola *${vendedor.nombre}*.\n\n${MENU_TEXT}` });
         }
@@ -420,12 +443,11 @@ async function startBot() {
             return await safeSendMessage(from, { text: listado });
         }
 
-        // --- 5. FALLBACK ---
         await safeSendMessage(from, { text: "No pude encontrar ese producto o comando. Por favor, verifica la descripción o escribe *menu* para ver las opciones." });
     });
 }
 
-// ===== SERVIDOR HTTP (MANTENIDO EXACTAMENTE IGUAL) =====
+// ===== SERVIDOR HTTP =====
 const server = http.createServer(async (req, res) => {
     const parsedUrl = url.parse(req.url, true);
     const header = `<nav class="navbar navbar-dark bg-dark mb-4 shadow"><div class="container"><a class="navbar-brand fw-bold" href="/">ONE4CARS ADMIN</a></div></nav>`;
