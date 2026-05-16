@@ -10,7 +10,7 @@ const dbConfig = {
 async function obtenerFacturasNoNotificadas() {
     const conn = await mysql.createConnection(dbConfig);
     const [rows] = await conn.execute(
-        "SELECT id_factura, nro_factura, nombres, celular, total, fecha_reg, id_cliente FROM tab_facturas WHERE whatsapp_notificado = 'NO' AND anulado = 'no' ORDER BY id_factura ASC"
+        "SELECT id_factura, nro_factura, nombres, celular, total, fecha_reg, id_cliente FROM tab_facturas WHERE whatsapp_notificado = 'NO'  AND pagada = 'NO'  AND anulado = 'no' ORDER BY id_factura ASC"
     );
     await conn.end();
     return rows;
