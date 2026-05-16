@@ -23,7 +23,7 @@ async function obtenerFacturasNoNotificadas() {
 
 async function obtenerFacturasNoNotificadasCount() {
     const conn = await mysql.createConnection(dbConfig);
-    const [rows] = await conn.execute("SELECT COUNT(*) as total FROM tab_facturas WHERE whatsapp_notificado = 'NO' AND anulado = 'no'");
+    const [rows] = await conn.execute("SELECT COUNT(*) as total FROM tab_facturas WHERE whatsapp_notificado = 'NO' AND pagada = 'NO' AND anulado = 'no'");
     await conn.end();
     return rows[0].total;
 }
