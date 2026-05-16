@@ -145,6 +145,14 @@ async function initDB() {
             contenido TEXT, 
             fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci`);
+
+        await pool.execute(`CREATE TABLE IF NOT EXISTS recordatorios_log (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            id_factura INT NOT NULL,
+            nivel INT NOT NULL,
+            fecha_envio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_recordatorio (id_factura, nivel)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci`);
         
         console.log("✅ Base de Datos vinculada.");
     } catch (e) { console.log("❌ Error DB Init:", e.message); }
@@ -290,6 +298,76 @@ async function checkNuevasFacturas() {
     }
 }
 
+// ===== RECORDATORIOS DE FACTURAS VENCIDAS =====
+let recordatorioEjecutando = false;
+
+function obtenerNivelRecordatorio(dias) {
+    if (dias >= 60) return 60;
+    if (dias >= 50) return 50;
+    if (dias >= 40) return 40;
+    if (dias >= 30) return 30;
+    return null;
+}
+
+function obtenerTonoMensaje(nivel, f, monto, fecha) {
+    if (nivel >= 60) {
+        return `🧾 *AVISO DE PAGO PENDIENTE*\n\nHola *${f.nombres}*, la factura *N° ${f.nro_factura}* emitida el *${fecha}* ya superó los 60 días de vencida con un saldo de *$${monto.toFixed(2)}*.\n\nEl retraso en el pago afecta la rotación de nuestros productos y la disponibilidad de inventario para todos nuestros clientes. Le agradecemos realizar el pago a la mayor brevedad posible.\n\nQuedamos a su disposición para cualquier duda o gestión. 🚗`;
+    }
+    return `🧾 *RECORDATORIO DE PAGO*\n\nHola *${f.nombres}*, le recordamos amablemente que la factura *N° ${f.nro_factura}* con fecha *${fecha}* presenta un saldo pendiente de *$${monto.toFixed(2)}*.\n\nLe agradecemos gestionar el pago para mantener su cuenta al día. Estamos a su disposición para cualquier consulta. 🚗`;
+}
+
+async function checkFacturasVencidas() {
+    if (!isBotReady() || recordatorioEjecutando) return;
+    recordatorioEjecutando = true;
+    try {
+        const facturas = await notificador.obtenerFacturasVencidas();
+        const enviados = await notificador.obtenerRecordatoriosEnviados();
+        let cont = 0;
+
+        for (const f of facturas) {
+            const dias = f.dias_vencida;
+            const nivel = obtenerNivelRecordatorio(dias);
+            if (!nivel) continue;
+
+            const yaEnviado = enviados[f.id_factura] && enviados[f.id_factura].includes(nivel);
+            if (yaEnviado) continue;
+
+            const monto = (parseFloat(f.total) - parseFloat(f.abono_factura || 0)) / (parseFloat(f.porcentaje) || 1);
+            if (monto <= 0) continue;
+
+            const fecha = new Date(f.fecha_reg).toISOString().split('T')[0];
+
+            // Enviar al cliente
+            const jid = formatWhatsApp(f.celular);
+            if (jid) {
+                const msg = obtenerTonoMensaje(nivel, f, monto, fecha);
+                await safeSendMessage(jid, { text: msg });
+            }
+
+            // Enviar al vendedor
+            if (f.celular_vendedor) {
+                const jidV = formatWhatsApp(f.celular_vendedor);
+                if (jidV) {
+                    const msgV = `📢 *RECORDATORIO A SU CLIENTE*\n\nVendedor: *${f.vendedor_nombre || 'N/A'}*\nCliente: *${f.nombres}*\nFactura: *N° ${f.nro_factura}*\nSaldo: *$${monto.toFixed(2)}*\nDías vencida: *${dias}*`;
+                    await safeSendMessage(jidV, { text: msgV });
+                }
+            }
+
+            await notificador.marcarRecordatorio(f.id_factura, nivel);
+            cont++;
+            await sleep(1000);
+        }
+
+        if (cont > 0) {
+            console.log(`[RECORDATORIO] ${cont} recordatorio(s) enviado(s).`);
+        }
+    } catch (e) {
+        console.log("[RECORDATORIO] Error:", e.message);
+    } finally {
+        recordatorioEjecutando = false;
+    }
+}
+
 // ===== BOT WHATSAPP =====
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
@@ -314,6 +392,7 @@ async function startBot() {
             console.log("🚀 BOT MASTER ONLINE");
             if (!notificadorInterval) {
                 notificadorInterval = setInterval(checkNuevasFacturas, 45000);
+                setInterval(checkFacturasVencidas, 21600000);
             }
         }
         if (connection === 'close') {
@@ -552,6 +631,47 @@ const server = http.createServer(async (req, res) => {
                     <p>Facturas pendientes por notificar: <strong>${total}</strong></p>
                     <p>Estado del Bot: ${isBotReady() ? '<span class="text-success">🟢 Online</span>' : '<span class="text-danger">🔴 Offline</span>'}</p>
                     <p class="text-muted small mt-3">El sistema verifica cada 45 segundos si hay nuevas facturas sin notificar.</p>
+                    <a href="/" class="btn btn-outline-secondary mt-3">Volver</a>
+                </div>
+            </div>
+        </body></html>`);
+    } else if (parsedUrl.pathname === '/recordatorio-estado') {
+        const facturas = await notificador.obtenerFacturasVencidas();
+        const enviados = await notificador.obtenerRecordatoriosEnviados();
+        const hoy = new Date();
+        res.end(`<!DOCTYPE html>
+        <html lang="es">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+            <title>Recordatorios - ONE4CARS</title>
+        </head>
+        <body class="bg-light">
+            ${header}
+            <div class="container mt-5">
+                <div class="card shadow-lg p-4 mx-auto" style="max-width: 800px; border-radius: 15px;">
+                    <h3 class="mb-3">📅 Recordatorios de Facturas Vencidas</h3>
+                    <hr>
+                    <table class="table table-sm">
+                        <thead><tr><th>Factura</th><th>Cliente</th><th>Días</th><th>Nivel</th><th>Estado</th></tr></thead>
+                        <tbody>
+                        ${facturas.map(f => {
+                            const dias = f.dias_vencida;
+                            const nivel = dias >= 60 ? 60 : dias >= 50 ? 50 : dias >= 40 ? 40 : 30;
+                            const yaEnviado = enviados[f.id_factura] && enviados[f.id_factura].includes(nivel);
+                            return `<tr>
+                                <td>${f.nro_factura}</td>
+                                <td>${f.nombres}</td>
+                                <td>${dias}</td>
+                                <td>${nivel}+</td>
+                                <td>${yaEnviado ? '<span class="text-success">✅ Enviado</span>' : '<span class="text-warning">⏳ Pendiente</span>'}</td>
+                            </tr>`;
+                        }).join('')}
+                        </tbody>
+                    </table>
+                    <p class="text-muted small">Los recordatorios se envían cada 6 horas automáticamente.</p>
+                    <a href="/" class="btn btn-outline-secondary">Volver</a>
                 </div>
             </div>
         </body></html>`);
@@ -578,6 +698,7 @@ const server = http.createServer(async (req, res) => {
                         <a href="/cobranza" class="btn btn-primary">PANEL DE COBRANZA</a>
                         <a href="/marketing-panel" class="btn btn-info text-white">PANEL DE MARKETING</a>
                         <a href="/notificador-estado" class="btn btn-secondary text-white">NOTIFICADOR</a>
+                        <a href="/recordatorio-estado" class="btn btn-warning text-dark">RECORDATORIOS</a>
                     </div>
                 </div>
             </div>
