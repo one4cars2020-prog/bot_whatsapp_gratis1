@@ -2,7 +2,6 @@ const { default: makeWASocket, DisconnectReason, fetchLatestBaileysVersion, init
 const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode');
 const http = require('http');
-const url = require('url');
 const pino = require('pino');
 const fs = require('fs');
 const mysql = require('mysql2/promise');
@@ -50,7 +49,7 @@ let socketBot = null;
 let dolarInfo = { bcv: 'Cargando...', paralelo: 'Cargando...' };
 
 // ==========================================================================
-// GESTIÓN DE SESIÓN EN MYSQL (CORREGIDO PARA EVITAR EL ERROR 'me')
+// GESTIÓN DE SESIÓN EN MYSQL (CORREGIDO PARA EVITAR EL CRASH)
 // ==========================================================================
 async function useMySQLAuthState(pool) {
     const loadCreds = async () => {
@@ -62,7 +61,31 @@ async function useMySQLAuthState(pool) {
         } catch (e) {
             console.log("Error cargando credenciales:", e.message);
         }
-        return initCreds(); // Retorna credenciales iniciales si no hay nada en la DB
+        
+        // Si initCreds no existe como función, devolvemos un objeto de credenciales vacío
+        // Baileys lo inicializará automáticamente.
+        if (typeof initCreds === 'function') {
+            return initCreds();
+        } else {
+            // Fallback manual si la importación falla
+            return {
+                noiseKey: require('@whiskeysockets/baileys').Curve.generateKeyPair(),
+                signedIdentityKey: require('@whiskeysockets/baileys').Curve.generateKeyPair(),
+                signedPreKey: require('@whiskeysockets/baileys').Curve.generateKeyPair(),
+                registrationId: Math.floor(Math.random() * 10000),
+                advSecretKey: require('crypto').randomBytes(32).toString('base64'),
+                nextPreKeyId: 1,
+                firstUnackedPreKeyId: 1,
+                serverHasPreKey: false,
+                accountSyncCounter: 0,
+                accountSettings: { unarchiveChats: false },
+                registered: false,
+                registration: {},
+                pairingCode: undefined,
+                lastPropHash: undefined,
+                hasAccountSignature: false,
+            };
+        }
     };
 
     const saveCreds = async (creds) => {
@@ -102,7 +125,6 @@ async function useMySQLAuthState(pool) {
         saveCreds
     };
 }
-// ==========================================================================
 
 // ===== FUNCIONES DE APOYO =====
 
@@ -449,29 +471,31 @@ async function startBot() {
 
 // ===== SERVIDOR HTTP =====
 const server = http.createServer(async (req, res) => {
-    const parsedUrl = url.parse(req.url, true);
+    // CORRECCIÓN: Uso de la API moderna de URL para evitar avisos de deprecación
+    const reqUrl = new URL(req.url, `http://${req.headers.host}`);
+    const query = Object.fromEntries(reqUrl.searchParams);
     const header = `<nav class="navbar navbar-dark bg-dark mb-4 shadow"><div class="container"><a class="navbar-brand fw-bold" href="/">ONE4CARS ADMIN</a></div></nav>`;
 
-    if (parsedUrl.pathname === '/cobranza') {
+    if (reqUrl.pathname === '/cobranza') {
         const v = await cobranza.obtenerVendedores();
         const z = await cobranza.obtenerZonas();
-        const d = await cobranza.obtenerListaDeudores(parsedUrl.query);
-        res.end(await cobranza.generarHTML(v, z, d, header, parsedUrl.query));
-    } else if (parsedUrl.pathname === '/marketing-panel') {
+        const d = await cobranza.obtenerListaDeudores(query);
+        res.end(await cobranza.generarHTML(v, z, d, header, query));
+    } else if (reqUrl.pathname === '/marketing-panel') {
         const v = await marketingModulo.obtenerVendedores();
         const z = await marketingModulo.obtenerZonas();
-        const c = await marketingModulo.obtenerClientesMarketing(parsedUrl.query);
+        const c = await marketingModulo.obtenerClientesMarketing(query);
         res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
-        res.end(await marketingModulo.generarHTMLMarketing(c, v, z, header, parsedUrl.query));
-    } else if (parsedUrl.pathname === '/marketing-preview') {
+        res.end(await marketingModulo.generarHTMLMarketing(c, v, z, header, query));
+    } else if (reqUrl.pathname === '/marketing-preview') {
         let sql = "SELECT id_cliente, nombres, celular FROM tab_clientes WHERE celular IS NOT NULL AND celular != ''";
         const params = [];
-        if (parsedUrl.query.vendedor) { sql += " AND vendedor = ?"; params.push(parsedUrl.query.vendedor); }
-        if (parsedUrl.query.zona) { sql += " AND zona = ?"; params.push(parsedUrl.query.zona); }
+        if (query.vendedor) { sql += " AND vendedor = ?"; params.push(query.vendedor); }
+        if (query.zona) { sql += " AND zona = ?"; params.push(query.zona); }
         const [clientes] = await pool.execute(sql, params);
         res.writeHead(200, {'Content-Type': 'application/json'});
         res.end(JSON.stringify(clientes));
-    } else if (parsedUrl.pathname === '/enviar-marketing' && req.method === 'POST') {
+    } else if (reqUrl.pathname === '/enviar-marketing' && req.method === 'POST') {
         if (!isBotReady()) return res.end("Bot no listo.");
         let b = ''; req.on('data', c => b += c);
         req.on('end', async () => {
@@ -493,7 +517,7 @@ const server = http.createServer(async (req, res) => {
             }
             res.end("OK");
         });
-    } else if (parsedUrl.pathname === '/enviar-cobranza' && req.method === 'POST') {
+    } else if (reqUrl.pathname === '/enviar-cobranza' && req.method === 'POST') {
         if (!isBotReady()) return res.end("Bot no listo.");
         let b = ''; req.on('data', c => b += c);
         req.on('end', async () => {
