@@ -83,10 +83,18 @@ function soloNumerosRIF(texto) {
 async function safeSendMessage(jid, content) {
     try {
         if (!socketBot) throw new Error("Socket no inicializado");
-        await socketBot.sendMessage(jid, content);
+        botSendingCount++;
+        const sent = await socketBot.sendMessage(jid, content);
+        if (sent?.key?.id) {
+            botMessageTimestamps.set(sent.key.id, Date.now());
+            setTimeout(() => botMessageTimestamps.delete(sent.key.id), 300000);
+        }
         console.log(`[MSG] ✅ Mensaje enviado a ${jid}`);
+        return sent;
     } catch (e) {
         console.log(`[MSG] ❌ Error enviando mensaje:`, e.message);
+    } finally {
+        botSendingCount--;
     }
 }
 
@@ -110,6 +118,9 @@ const randomDelay = async () => {
     const ms = Math.floor(Math.random() * (25000 - 15000 + 1)) + 15000; 
     await sleep(ms);
 };
+
+const botMessageTimestamps = new Map();
+let botSendingCount = 0;
 
 async function guardarMensaje(tel, rol, contenido) {
     try {
@@ -482,27 +493,38 @@ async function startBot() {
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         try {
-        if (type !== 'notify') return;
         const msg = messages[0];
-        if (!msg.message) return;
+        if (!msg?.message || !msg.key) return;
 
         const from = msg.key.remoteJid;
-        if (from === 'status@broadcast' || from.includes('@g.us')) return;
+        if (!from || from === 'status@broadcast' || from.includes('@g.us')) return;
 
-        // VERIFICACIÓN DE ADMINISTRADOR (Cualquiera de los IDs en la lista)
-        const isAdmin = ADMIN_IDS.some(id => from.includes(id));
-        const vendedor = await buscarVendedor(from, msg.pushName || "Vendedor");
-
+        // PROCESAR MENSAJES SALIENTES (fromMe) ANTES DEL FILTRO DE TIPO
+        // porque cuando un humano escribe desde WhatsApp Web, el type puede ser 'append' no 'notify'
         if (msg.key.fromMe) {
             const textMe = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").toLowerCase();
             if (textMe === '!bot') {
                 await setModo(from, 'bot');
                 await safeSendMessage(from, { text: "🤖 Bot reactivado para este chat." });
-            } else if (!isAdmin) {
-                await setModo(from, 'humano');
+            } else {
+                const msgId = msg.key.id;
+                const isBotMessage = botMessageTimestamps.has(msgId) || botSendingCount > 0;
+                if (!isBotMessage) {
+                    await pool.execute(
+                        "INSERT INTO control_chat (telefono, modo) VALUES (?, 'humano') ON DUPLICATE KEY UPDATE modo = 'humano', updated_at = CURRENT_TIMESTAMP",
+                        [from]
+                    );
+                    console.log(`[MODO] Chat ${from.split('@')[0]} cambiado a 'humano' por intervención humana`);
+                }
             }
             return;
         }
+
+        if (type !== 'notify') return;
+
+        // VERIFICACIÓN DE ADMINISTRADOR (Cualquiera de los IDs en la lista)
+        const isAdmin = ADMIN_IDS.some(id => from.includes(id));
+        const vendedor = await buscarVendedor(from, msg.pushName || "Vendedor");
 
         const pushName = msg.pushName || "Usuario";
         const rawText = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").trim();
@@ -514,7 +536,19 @@ async function startBot() {
         await guardarMensaje(from, 'user', rawText);
 
         const sesion = await getSesion(from);
-        if (sesion && sesion.modo === 'humano' && !isAdmin) return;
+        if (sesion && sesion.modo === 'humano' && !isAdmin) {
+            const lastUpdate = sesion.updated_at;
+            if (lastUpdate) {
+                const diffMs = Date.now() - new Date(lastUpdate).getTime();
+                if (diffMs > 300000) {
+                    await setModo(from, 'bot');
+                } else {
+                    return;
+                }
+            } else {
+                return;
+            }
+        }
 
         // --- 1. LÓGICA DE RIF (RESTRINGIDA SOLO A ADMINS) ---
         if (isAdmin && esRIFPuro) {
