@@ -1,22 +1,6 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
-const { Boom } = require('@hapi/boom');
-const qrcode = require('qrcode');
-const http = require('http');
-const url = require('url');
-const pino = require('pino');
-const fs = require('fs');
 const mysql = require('mysql2/promise');
-const { GoogleGenerativeAI } = require("@google/generative-ai");
 
-// ===== CONFIG =====
-const PORT = process.env.PORT || 10000;
-const apiKey = process.env.GEMINI_API_KEY || "";
-
-// ===== IA =====
-const genAI = new GoogleGenerativeAI(apiKey);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-
-// ===== DB =====
+// ===== CONFIGURACIÓN DE DB =====
 const dbConfig = {
     host: 'one4cars.com',
     user: 'juant200_one4car',
@@ -24,235 +8,203 @@ const dbConfig = {
     database: 'juant200_venezon'
 };
 
-// ===== VARIABLES =====
-let qrCodeData = "Iniciando...";
-let sockGlobal = null;
-
-// ===== HELPERS =====
-function limpiarCedula(texto) {
-    return texto.replace(/\D/g, '');
+async function db() { 
+    return await mysql.createConnection(dbConfig); 
 }
 
-async function db() {
-    return await mysql.createConnection(dbConfig);
-}
-
-async function getSesion(tel) {
+// 1. Obtener lista de vendedores para el filtro dinámico
+async function obtenerVendedores() {
     const conn = await db();
-    const [r] = await conn.execute("SELECT * FROM control_chat WHERE telefono=?", [tel]);
+    const [rows] = await conn.execute("SELECT DISTINCT vendedor FROM tab_clientes WHERE vendedor != '' ORDER BY vendedor ASC");
     await conn.end();
-    return r[0] || null;
+    return rows;
 }
 
-async function setModo(tel, modo) {
+// 2. Obtener lista de zonas para el filtro dinámico
+async function obtenerZonas() {
     const conn = await db();
-    await conn.execute(`
-        INSERT INTO control_chat (telefono, modo)
-        VALUES (?,?)
-        ON DUPLICATE KEY UPDATE modo=VALUES(modo)
-    `, [tel, modo]);
+    const [rows] = await conn.execute("SELECT DISTINCT zona FROM tab_clientes WHERE zona != '' ORDER BY zona ASC");
     await conn.end();
+    return rows;
 }
 
-async function guardarUsuario(tel, usuario) {
+// 3. Obtener clientes que tienen facturas pendientes (Deudores)
+async function obtenerListaDeudores(filtros) {
     const conn = await db();
-    await conn.execute(`
-        INSERT INTO control_chat (telefono, usuario, modo)
-        VALUES (?,?, 'bot')
-        ON DUPLICATE KEY UPDATE usuario=VALUES(usuario)
-    `, [tel, usuario]);
+    
+    // SQL optimizado: Agrupa por cliente para evitar repetir filas por factura
+    let sql = `
+        SELECT 
+            c.id_cliente, 
+            c.nombres, 
+            c.celular, 
+            c.vendedor, 
+            c.zona, 
+            SUM((f.total - f.abono_factura) / (f.porcentaje || 1)) as saldo_total,
+            COUNT(f.id_factura) as cantidad_facturas
+        FROM tab_clientes c
+        JOIN tab_facturas f ON c.id_cliente = f.id_cliente
+        WHERE f.pagada = 'NO' AND f.anulado = 'no'
+    `;
+    
+    const params = [];
+    
+    // Filtros dinámicos
+    if (filtros.vendedor) {
+        sql += " AND c.vendedor = ?";
+        params.push(filtros.vendedor);
+    }
+    if (filtros.zona) {
+        sql += " AND c.zona = ?";
+        params.push(filtros.zona);
+    }
+
+    sql += " GROUP BY c.id_cliente ORDER BY saldo_total DESC";
+    
+    const [rows] = await conn.execute(sql, params);
     await conn.end();
+    return rows;
 }
 
-async function buscarCliente(usuario) {
-    const conn = await db();
-    const [r] = await conn.execute(
-        "SELECT id_cliente, nombres FROM tab_clientes WHERE usuario=? LIMIT 1",
-        [usuario]
-    );
-    await conn.end();
-    return r[0] || null;
-}
+// 4. Generar el HTML del Panel de Cobranza (Ancho Completo)
+async function generarHTML(vendedores, zonas, deudores, header, q) {
+    return `<!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+        <title>Cobranza ONE4CARS</title>
+        <style>
+            body { background-color: #f8f9fa; }
+            .card-custom { border-radius: 15px; border: none; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+            .table-full { width: 100% !important; }
+            .btn-send { transition: all 0.3s; }
+            .btn-send:hover { transform: scale(1.02); }
+        </style>
+    </head>
+    <body>
+        ${header}
+        
+        <div class="container-fluid px-4">
+            
+            <!-- SECCIÓN DE FILTROS (ARRIBA PARA DAR ESPACIO A LA TABLA) -->
+            <div class="card card-custom p-4 mb-4">
+                <div class="row align-items-end">
+                    <div class="col-md-4">
+                        <h4 class="mb-0">💰 Gestión de Cobros</h4>
+                        <p class="text-muted small">Filtre clientes y envíe recordatorios masivos.</p>
+                    </div>
+                    <div class="col-md-3">
+                        <form method="GET" action="/cobranza" class="row g-2">
+                            <div class="col-6">
+                                <label class="form-label small fw-bold">Vendedor:</label>
+                                <select name="vendedor" class="form-select">
+                                    <option value="">Todos</option>
+                                    ${vendedores.map(v => `<option value="${v.vendedor}" ${q.vendedor === v.vendedor ? 'selected' : ''}>${v.vendedor}</option>`).join('')}
+                                </select>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small fw-bold">Zona:</label>
+                                <select name="zona" class="form-select">
+                                    <option value="">Todas</option>
+                                    ${zonas.map(z => `<option value="${z.zona}" ${q.zona === z.zona ? 'selected' : ''}>${z.zona}</option>`).join('')}
+                                </select>
+                            </div>
+                            <div class="col-12 mt-3">
+                                <button type="submit" class="btn btn-dark w-100">Aplicar Filtros</button>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="col-md-5 text-end">
+                        <button onclick="enviarCobranzaMasiva()" class="btn btn-danger btn-lg px-5 btn-send shadow">🚀 Enviar WhatsApp a Seleccionados</button>
+                        <div id="status" class="mt-2 small fw-bold"></div>
+                    </div>
+                </div>
+            </div>
 
-async function obtenerSaldo(id) {
-    const conn = await db();
-    const [r] = await conn.execute(
-        "SELECT SUM(total - abono_factura) saldo FROM tab_facturas WHERE id_cliente=? AND pagada='NO'",
-        [id]
-    );
-    await conn.end();
-    return r[0].saldo || 0;
-}
+            <!-- TABLA A LO ANCHO (SIN SCROLL) -->
+            <div class="card card-custom p-4">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5>Clientes con Deuda Pendiente (${deudores.length})</h5>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="selectAll" checked onclick="toggleAll()">
+                        <label class="form-check-label small">Seleccionar Todos</label>
+                    </div>
+                </div>
+                
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle table-full">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width: 40px;">Sel</th>
+                                <th>Cliente</th>
+                                <th>Celular</th>
+                                <th>Zona</th>
+                                <th>Vendedor</th>
+                                <th class="text-center">Facturas</th>
+                                <th class="text-end">Deuda Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${deudores.length > 0 ? deudores.map(d => `
+                            <tr>
+                                <td><input type="checkbox" class="client-check" value="${d.id_cliente}" checked></td>
+                                <td><strong>${d.nombres}</strong></td>
+                                <td>${d.celular}</td>
+                                <td><span class="badge bg-secondary">${d.zona}</span></td>
+                                <td>${d.vendedor}</td>
+                                <td class="text-center">${d.cantidad_facturas}</td>
+                                <td class="text-end text-danger fw-bold">$${parseFloat(d.saldo_total).toFixed(2)}</td>
+                            </tr>`).join('') : `<tr><td colspan="7" class="text-center text-muted">No hay deudores con los filtros seleccionados.</td></tr>`}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
 
-async function getChats() {
-    const conn = await db();
-    const [r] = await conn.execute("SELECT * FROM control_chat ORDER BY updated_at DESC");
-    await conn.end();
-    return r;
-}
-
-// ===== BOT =====
-async function startBot() {
-
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info');
-    const { version } = await fetchLatestBaileysVersion();
-
-    const sock = makeWASocket({
-        version,
-        auth: state,
-        logger: pino({ level: 'silent' })
-    });
-
-    sockGlobal = sock;
-
-    sock.ev.on('creds.update', saveCreds);
-
-    sock.ev.on('connection.update', (u) => {
-        const { connection, lastDisconnect, qr } = u;
-
-        if (qr) {
-            qrcode.toDataURL(qr, (_, url) => qrCodeData = url);
-        }
-
-        if (connection === 'open') {
-            qrCodeData = "ONLINE ✅";
-            console.log("CONECTADO");
-        }
-
-        if (connection === 'close') {
-            const shouldReconnect =
-                (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-
-            if (shouldReconnect) setTimeout(startBot, 5000);
-        }
-    });
-
-    sock.ev.on('messages.upsert', async ({ messages }) => {
-
-        const msg = messages[0];
-        if (!msg.message) return;
-
-        const from = msg.key.remoteJid;
-        if (from.includes('@g.us')) return;
-
-        const tel = from.split('@')[0];
-
-        // SI ES TUYO → MODO HUMANO
-        if (msg.key.fromMe) {
-            await setModo(tel, 'humano');
-            return;
-        }
-
-        const text = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").trim();
-        if (!text) return;
-
-        const sesion = await getSesion(tel);
-
-        if (sesion && sesion.modo === 'humano') return;
-
-        // SALUDO
-        if (!sesion) {
-            await sock.sendMessage(from, {
-                text: "👋 Bienvenido a ONE4CARS 🚗\n\nEnvíe su RIF o escriba *menu*"
-            });
-        }
-
-        // MENU
-        if (text.toLowerCase().includes("menu")) {
-            await sock.sendMessage(from, {
-                text: "📋 MENÚ:\n1 Pagos\n2 Estado de cuenta\n3 Precios\n4 Pedidos\n6 Registro\n8 Despacho"
-            });
-            return;
-        }
-
-        // IDENTIFICAR CLIENTE
-        if (!sesion || !sesion.usuario) {
-            const cedula = limpiarCedula(text);
-
-            if (cedula.length >= 6) {
-                const cliente = await buscarCliente(cedula);
-
-                if (cliente) {
-                    await guardarUsuario(tel, cedula);
-
-                    await sock.sendMessage(from, {
-                        text: `Hola ${cliente.nombres} 👋\nEscriba *saldo* para consultar`
-                    });
-                    return;
-                }
+        <script>
+            function toggleAll() {
+                const check = document.getElementById('selectAll').checked;
+                document.querySelectorAll('.client-check').forEach(c => c.checked = check);
             }
 
-            await sock.sendMessage(from, {
-                text: "🔐 Envíe su RIF para continuar"
-            });
-            return;
-        }
+            async function enviarCobranzaMasiva() {
+                const selected = Array.from(document.querySelectorAll('.client-check:checked')).map(c => c.value);
+                if (selected.length === 0) return alert("Selecciona al menos un cliente.");
 
-        const cliente = await buscarCliente(sesion.usuario);
-
-        // SALDO
-        if (text.toLowerCase().includes("saldo")) {
-            const saldo = await obtenerSaldo(cliente.id_cliente);
-
-            await sock.sendMessage(from, {
-                text: `💰 Su saldo es: $${saldo.toFixed(2)}`
-            });
-            return;
-        }
-
-        // IA
-        try {
-            const instrucciones = fs.readFileSync('./instrucciones.txt', 'utf8');
-
-            const chat = model.startChat({
-                history: [{ role: "user", parts: [{ text: instrucciones }] }]
-            });
-
-            const r = await chat.sendMessage(text);
-            await sock.sendMessage(from, { text: r.response.text() });
-
-        } catch {
-            await sock.sendMessage(from, { text: "⚠️ Error, escriba menu." });
-        }
-
-    });
+                const status = document.getElementById('status');
+                status.className = "mt-2 small fw-bold text-primary";
+                status.innerHTML = "⏳ Enviando recordatorios... Por favor espere.";
+                
+                try {
+                    const response = await fetch('/enviar-cobranza', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ facturas: selected })
+                    });
+                    
+                    if (response.ok) {
+                        status.className = "mt-2 small fw-bold text-success";
+                        status.innerHTML = "✅ ¡Mensajes enviados con éxito!";
+                        alert("Los recordatorios han sido enviados a través del Bot.");
+                    } else {
+                        status.className = "mt-2 small fw-bold text-danger";
+                        status.innerHTML = "❌ Error al procesar el envío.";
+                    }
+                } catch (e) {
+                    status.className = "mt-2 small fw-bold text-danger";
+                    status.innerHTML = "❌ Error de conexión con el servidor.";
+                }
+            }
+        </script>
+    </body>
+    </html>`;
 }
 
-// ===== SERVER =====
-const server = http.createServer(async (req, res) => {
-
-    const parsed = url.parse(req.url, true);
-
-    if (parsed.pathname === '/panel') {
-        const chats = await getChats();
-
-        res.end(`
-        <h2>Panel</h2>
-        ${chats.map(c => `
-        <p>${c.telefono} - ${c.modo}
-        <a href="/modo?tel=${c.telefono}&modo=${c.modo === 'bot' ? 'humano' : 'bot'}">Cambiar</a>
-        </p>
-        `).join('')}
-        `);
-        return;
-    }
-
-    if (parsed.pathname === '/modo') {
-        await setModo(parsed.query.tel, parsed.query.modo);
-        res.end("OK");
-        return;
-    }
-
-    res.end(`
-    <h2>ONE4CARS BOT</h2>
-    ${qrCodeData.startsWith('data') ? `<img src="${qrCodeData}" width="250">` : `<h3>${qrCodeData}</h3>`}
-    <br><a href="/panel">Panel</a>
-    `);
-
-});
-
-// 🔥 IMPORTANTE: SOLO UNA VEZ
-server.listen(PORT, () => {
-    console.log("Servidor corriendo en puerto", PORT);
-    startBot();
-});
+module.exports = { 
+    obtenerVendedores, 
+    obtenerZonas, 
+    obtenerListaDeudores, 
+    generarHTML 
+};
