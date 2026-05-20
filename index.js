@@ -221,6 +221,12 @@ async function buscarProductoPorTexto(texto) {
 
     if (palabras.length === 0) return null;
 
+    // --- FILTRO DE PALABRAS DE POSICIÓN (SOLO COINCIDENCIAS) ---
+    const positionalWords = ['superior', 'sup', 'inferior', 'inf', 'interno', 'int', 'externo', 'ext', 'derecha', 'der', 'izquierda', 'izq'];
+    const isOnlyPositional = palabras.every(p => positionalWords.includes(p));
+    if (isOnlyPositional) return null; 
+    // ---------------------------------------------------------
+
     const queryBase = "SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ";
     const vistos = new Set();
 
@@ -550,8 +556,13 @@ async function startBot() {
             }
         }
 
-        // --- 2. LÓGICA DE PRODUCTOS (Para todos) ---
-        if (text !== 'menu' && text !== 'hola') {
+        // --- 2. LÓGICA DE PAGO MÓVIL ---
+        if (text.includes("pago movil") || text.includes("forma de pago") || text.includes("datos")) {
+            return await safeSendMessage(from, { text: "Saludos este es Nuestro Pago Movil\n04142423348\nV12959286\nBanesco" });
+        }
+
+        // --- 3. LÓGICA DE PRODUCTOS (Para todos) ---
+        if (text !== 'menu' && !['hola', 'buen dia', 'buenos dias'].includes(text)) {
             try {
                 const prods = await buscarProductoPorTexto(rawText);
                 if (prods) {
@@ -570,7 +581,7 @@ async function startBot() {
             } catch (e) { console.log("Error en flujo de productos:", e); }
         }
 
-        // --- 3. COMANDOS DE ADMINISTRADOR ---
+        // --- 4. COMANDOS DE ADMINISTRADOR ---
         if (isAdmin) {
             if (text === 'dolar') {
                 await actualizarDolar();
@@ -581,12 +592,12 @@ async function startBot() {
             }
         }
 
-        // --- 4. VENDEDOR / CLIENTE ---
-        if (vendedor && (text === 'menu' || text === 'hola')) {
-            return await safeSendMessage(from, { text: `👋 Hola *${vendedor.nombre}*.\n\n${MENU_TEXT}` });
+        // --- 5. SALUDO CORDIAL Y MENU (Vendedor / Cliente) ---
+        if (text === 'menu' || text === 'hola' || text === 'buen dia' || text === 'buenos dias') {
+            const nombreUsuario = vendedor ? vendedor.nombre : pushName;
+            const saludoCordial = `¡Hola *${nombreUsuario}*! Es un gusto saludarte. 😊\n\n¿En qué podemos ayudarte hoy? Por favor, indícanos qué servicio necesitas o consulta nuestro menú a continuación:\n\n${MENU_TEXT}`;
+            return await safeSendMessage(from, { text: saludoCordial });
         }
-
-        if (text === 'menu') return await safeSendMessage(from, { text: MENU_TEXT });
         
         if (text.includes("saldo") || text === '2') {
             const targetID = sesion?.id_cliente_int;
@@ -605,7 +616,7 @@ async function startBot() {
             return await safeSendMessage(from, { text: listado });
         }
 
-        // --- 5. FALLBACK ---
+        // --- 6. FALLBACK ---
         await safeSendMessage(from, { text: "No pude encontrar ese producto o comando. Por favor, verifica la descripción o escribe *menu* para ver las opciones." });
         } catch (e) { console.log("[MSG] Error en handler de mensajes:", e.message); }
     });
