@@ -1,3 +1,5 @@
+--- START OF FILE index (20).js ---
+
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode');
@@ -397,8 +399,13 @@ async function checkVendedoresRecordatorio() {
             const dias = f.dias_vencida;
             if (dias < 30) continue;
 
-            const monto = (parseFloat(f.total) - parseFloat(f.abono_factura || 0)) / (parseFloat(f.porcentaje) || 1);
+            let monto = (parseFloat(f.total) - parseFloat(f.abono_factura || 0)) / (parseFloat(f.porcentaje) || 1);
             if (monto <= 0 || !f.celular_vendedor) continue;
+
+            // MODIFICACIÓN SOLICITADA: Si el vendedor es MANUEL FERRAZ, dividir monto entre 0.80
+            if (f.vendedor_nombre && f.vendedor_nombre.toUpperCase() === 'MANUEL FERRAZ') {
+                monto = monto / 0.80;
+            }
 
             const key = f.celular_vendedor.toString().replace(/\D/g, '');
             if (!vendedoresMap[key]) {
