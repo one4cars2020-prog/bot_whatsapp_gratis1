@@ -1,3 +1,5 @@
+--- START OF FILE index (22).js ---
+
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode');
@@ -551,7 +553,7 @@ async function startBot() {
         const sesion = await getSesion(from);
         if (sesion && sesion.modo === 'humano' && !isAdmin) return;
 
-        // --- 1. LÓGICA DE RIF (RESTRINGIDA SOLO A ADMINS) ---
+        // --- 1. LÓGICA de RIF (RESTRINGIDA SOLO A ADMINS) ---
         if (isAdmin && esRIFPuro) {
             const rifLimpio = limpiarRIF(rawText);
             const c = await buscarCliente(rifLimpio);
@@ -586,12 +588,9 @@ async function startBot() {
         // --- 3. LÓGICA DE PRODUCTOS (Para todos) ---
         if (text !== 'menu' && !['hola', 'buen dia', 'buenos dias'].includes(text)) {
             try {
-                // --- 3. LÓGICA DE PRODUCTOS (Para todos) ---
-        if (text !== 'menu' && !['hola', 'buen dia', 'buenos dias'].includes(text)) {
-            try {
                 const prods = await buscarProductoPorTexto(rawText);
                 if (prods) {
-                    // LISTA DE SALUDOS HUMANIZADOS (El bot elegirá uno al azar)
+                    // LISTA DE SALUDOS HUMANIZADOS
                     const saludos = [
                         "Saludos estimado amigo, tomando en cuenta sus comentarios permítame recomendarle los siguientes artículos: 👇",
                         "¡Hola! He buscado en nuestro inventario y creo que estos artículos son justo lo que necesita: 👇",
@@ -600,14 +599,15 @@ async function startBot() {
                     ];
                     const saludoAzar = saludos[Math.floor(Math.random() * saludos.length)];
 
-                    // 1. Enviamos primero el mensaje humano
+                    // 1. Enviamos primero el mensaje humano (TEXTO)
                     await safeSendMessage(from, { text: saludoAzar });
                     
-                    // Pequeña pausa para que se sienta más natural
-                    await sleep(1000);
+                    // Pausa para naturalidad
+                    await sleep(1500);
 
-                    // 2. Ahora enviamos la lista de productos
+                    // 2. Ahora enviamos la lista de productos (IMAGENES)
                     for (const p of prods) {
+                        if (!isBotReady()) break; 
                         const precioLimpio = parseFloat(p.precio_final || 0).toFixed(2);
                         const caption = `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio Final: $${precioLimpio}*\n📝 ${p.descripcion}\n🔗 Ficha: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}`;
                         const imgUrl = `https://one4cars.com/imagen/${p.producto}.jpg`;
@@ -616,10 +616,9 @@ async function startBot() {
                         } catch (imgErr) {
                             await safeSendMessage(from, { text: caption });
                         }
-                        // Pausa entre productos para evitar bloqueos de WhatsApp
                         await sleep(1500);
                     }
-                    return;
+                    return; // Salir para no entrar en el fallback
                 }
             } catch (e) { console.log("Error en flujo de productos:", e); }
         }
@@ -663,7 +662,6 @@ async function startBot() {
         const conversationalShorts = ['si', 'no', 'ok', 'vale', 'gracias', 'ya', 'entendido', 'está bien', 'bueno', 'dale', 'está ok', 'está bien', 'claro'];
         if (conversationalShorts.includes(text)) return; 
 
-        // Si el mensaje es muy largo (> 120 caracteres), asumimos que es una conversación humana y el bot NO interviene.
         if (rawText.length > 120) return;
 
         await safeSendMessage(from, { text: "Lo siento, no logré entender tu solicitud. 😕 ¿Podrías darme más detalles o escribir *menu* para ver nuestras opciones?" });
