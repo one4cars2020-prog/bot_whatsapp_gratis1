@@ -224,12 +224,10 @@ async function buscarProductoPorTexto(texto) {
 
     if (palabrasBase.length === 0) return null;
 
-    // --- FILTRO DE PALABRAS DE POSICIÓN (SOLO COINCIDENCIAS) ---
     const positionalWords = ['superior', 'sup', 'inferior', 'inf', 'interno', 'int', 'externo', 'ext', 'derecha', 'der', 'izquierda', 'izq'];
     const isOnlyPositional = palabrasBase.every(p => positionalWords.includes(p));
     if (isOnlyPositional) return null;
 
-    // --- Expansión singular/plural ---
     const expandirFormas = (pal) => {
         const f = [pal];
         if (pal.endsWith('es') && pal.length > 4) f.push(pal.slice(0, -2));
@@ -242,21 +240,35 @@ async function buscarProductoPorTexto(texto) {
     };
 
     const stockCondition = "(cantidad_existencia + cantidad_existencia_almacen > 0)";
-    const queryBase = `SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ${stockCondition} AND `;
+    
+    // --- NUEVA LÓGICA DE BÚSQUEDA AND FLEXIBLE ---
+    // Para cada palabra, creamos un grupo de (desc LIKE %p1% OR desc LIKE %p2%...)
+    // Y luego unimos todos esos grupos con AND.
+    let whereClause = "";
+    let queryParams = [];
 
-    // 1. AND con las palabras base exactas
-    const allAnd = palabrasBase.map(() => "descripcion LIKE ?").join(" AND ");
+    palabrasBase.forEach((pal, index) => {
+        const formas = expandirFormas(pal);
+        const conditions = formas.map(() => "descripcion LIKE ?");
+        whereClause += `(${conditions.join(" OR ")})`;
+        if (index < palabrasBase.length - 1) whereClause += " AND ";
+        
+        formas.forEach(f => queryParams.push(`%${f}%`));
+    });
+
     try {
-        const [rows] = await pool.execute(queryBase + allAnd + " LIMIT 8", palabrasBase.map(p => `%${p}%`));
+        const sql = `SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ${stockCondition} AND ${whereClause} LIMIT 8`;
+        const [rows] = await pool.execute(sql, queryParams);
         if (rows.length > 0) return rows;
-    } catch (e) {}
+    } catch (e) {
+        console.log("Error en búsqueda AND Flexible:", e.message);
+    }
 
-    // 2. OR con todas las formas (singular/plural) ordenado por relevancia
+    // --- FALLBACK: Búsqueda por Relevancia (Solo si el AND Flexible no encontró nada) ---
     const expandedTerms = [...new Set(palabrasBase.flatMap(expandirFormas))];
     const orConditions = expandedTerms.map(() => "descripcion LIKE ?");
     const orParams = expandedTerms.map(p => `%${p}%`);
 
-    // Relevancia = cuantas palabras BASE distintas tienen al menos una forma coincidiendo
     const relevanceParts = palabrasBase.map(p => {
         const formas = expandirFormas(p);
         const cases = formas.map(f => `descripcion LIKE '%${f.replace(/[^a-z]/g, '')}%'`);
@@ -267,7 +279,7 @@ async function buscarProductoPorTexto(texto) {
 
     try {
         const [rows] = await pool.execute(
-            queryBase + orConditions.join(" OR ") + ` HAVING (${relevanceSQL}) >= ? ORDER BY ${relevanceSQL} DESC LIMIT 8`,
+            `SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ${stockCondition} AND ${orConditions.join(" OR ")} HAVING (${relevanceSQL}) >= ? ORDER BY ${relevanceSQL} DESC LIMIT 8`,
             [...orParams, minRelevance]
         );
         if (rows.length > 0) return rows;
@@ -275,7 +287,6 @@ async function buscarProductoPorTexto(texto) {
 
     return null;
 }
-
 async function obtenerDetalleFacturas(id_cliente, id_vendedor = null) {
     let query = `
         SELECT f.id_factura, f.nro_factura, f.total, f.abono_factura, f.fecha_reg, f.porcentaje, f.descuento, f.total_desc,
@@ -589,12 +600,12 @@ async function startBot() {
                 const prods = await buscarProductoPorTexto(rawText);
                 if (prods) {
                     // LISTA DE SALUDOS HUMANIZADOS
-                    const saludos = [
-                        "Saludos estimado amigo, tomando en cuenta sus comentarios permítame recomendarle los siguientes artículos: 👇",
-                        "¡Hola! He buscado en nuestro inventario y creo que estos artículos son justo lo que necesita: 👇",
-                        "Con gusto le ayudo. Basado en lo que me indica, aquí tiene las mejores opciones disponibles: 👇",
-                        "Hola, un placer saludarle. He encontrado estos productos que coinciden con su búsqueda: 👇"
-                    ];
+const saludos = [
+    "Saludos estimado , gracias por tu consulta puedo recomendarte estos artículos: 👇",
+    "¡Hola! He buscado en nuestro inventario y creo que estos artículos es lo que buscas: 👇",
+    "Con gusto le ayudo. Segun lo que me dices, aquí tienes la mejor opcion disponible: 👇",
+    "Hola, un placer saludarle. He encontrado estos productos que coinciden con su búsqueda: 👇"
+];
                     const saludoAzar = saludos[Math.floor(Math.random() * saludos.length)];
 
                     // 1. Enviamos primero el mensaje humano (TEXTO)
