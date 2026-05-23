@@ -209,8 +209,8 @@ async function buscarProductoPorTexto(texto) {
         'gusta', 'gustan', 'gusto', 'necesita', 'necesitan', 'necesitamos', 'pueda','UNID.','unid.','unidades','unidad','UNIDADES','unidades',
         'puedas', 'pudiera', 'pudieras', 'listo', 'claro', 'ok', 'okey', 'vale', 'va',
         'vamos', 'vaya', 'algun', 'alguna', 'algunos', 'algunas', 'ningun', 'ninguna',
-        'tipo', 'tipos', 'preguntar', 'disculpa', 'disculpe', 'permiso', 'ayudar',
-        'apoyo', 'consulta', 'consultar', 'info', 'informacion', 'decirme', 'dime',
+        'tipo', 'tipos', 'preguntar', 'disculpa', 'disculpe', 'permiso', 'ayudar', 'del', 'tra',
+        'apoyo', 'consulta', 'consultar', 'info', 'informacion', 'decirme', 'dime', 'como', 'esta', 'la', 'familia', 'queria', 'dime',
         'avísame', 'avisa', 'saber', 'sabes', 'saben', 'sabemos',
         'pana', 'panas', 'brother', 'bro', 'amigo', 'amigos', 'compa', 'compadre',
         'ando', 'andas', 'andan', 'andaba', 'andabas', 'andabamos', 'andaban',
@@ -224,7 +224,7 @@ async function buscarProductoPorTexto(texto) {
 
     if (palabrasBase.length === 0) return null;
 
-    const positionalWords = ['superior', 'sup', 'inferior', 'inf', 'interno', 'int', 'externo', 'ext', 'derecha', 'der', 'izquierda', 'izq'];
+    const positionalWords = ['superior', 'sup', 'inferior', 'inf', 'interno', 'int', 'externo', 'ext', 'derecha', 'der', 'delantera', 'trasera', 'izquierda', 'izq'];
     const isOnlyPositional = palabrasBase.every(p => positionalWords.includes(p));
     if (isOnlyPositional) return null;
 
