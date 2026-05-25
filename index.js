@@ -190,8 +190,7 @@ async function buscarCliente(rifLimpio) {
 
 /**
  * BÚSQUEDA DE PRODUCTOS OPTIMIZADA
- * Prioridad 1: Coincidencia ESTRICTA (AND) - Todas las palabras deben estar.
- * Prioridad 2: Coincidencia por RELEVANCIA - Solo si la prioridad 1 falló.
+ * Prioriza la cantidad de palabras coincidentes para evitar resultados irrelevantes.
  */
 async function buscarProductoPorTexto(texto) {
     const txtNormal = normalizar(texto);
@@ -211,7 +210,7 @@ async function buscarProductoPorTexto(texto) {
         'pueden', 'podemos', 'podria', 'hacer', 'hace', 'hacen', 'ser', 'estar', 'tener',
         'tengo', 'tenemos', 'tiene', 'decir', 'dice', 'dicen', 'digo', 'ver', 'veo',
         'ven', 'vez', 'veces', 'quiero', 'quiere', 'quieren', 'queremos', 'gustaria',
-        'gusta', 'gustan', 'gusto', 'necesita', 'necesitan', 'necesitamos', 'pueda','UNID.','unid.','unidades','unidad','UNIDADES','unidades',
+        'gusta', 'gustan', 'gusto', 'necesita', 'necesitan', 'necesitamos', 'pueda','UNID.','unid.','unidades','unidad','UNIDADES',
         'puedas', 'pudiera', 'pudieras', 'listo', 'claro', 'ok', 'okey', 'vale', 'va',
         'vamos', 'vaya', 'algun', 'alguna', 'algunos', 'algunas', 'ningun', 'ninguna',
         'tipo', 'tipos', 'preguntar', 'disculpa', 'disculpe', 'permiso', 'ayudar',
@@ -221,8 +220,7 @@ async function buscarProductoPorTexto(texto) {
         'ando', 'andas', 'andan', 'andaba', 'andabas', 'andabamos', 'andaban',
         'estoy', 'estas', 'esta', 'estaba', 'estabas', 'estabamos', 'estaban',
         'vengo', 'vienes', 'viene', 'vienen', 'venia', 'venias', 'veniamos', 'venian',
-        'voy', 'vas', 'va', 'vamos', 'van', 'iba', 'ibas', 'ibamos', 'iban',
-        'llegando', 'pais', 'país', 'atento'
+        'voy', 'vas', 'va', 'vamos', 'van', 'iba', 'ibas', 'ibamos', 'iban'
     ];
 
     const palabrasBase = txtNormal.split(' ')
@@ -247,58 +245,50 @@ async function buscarProductoPorTexto(texto) {
 
     const stockCondition = "(cantidad_existencia + cantidad_existencia_almacen > 0)";
     
-    // --- PRIORIDAD 1: BÚSQUEDA ESTRICTA (Todo debe coincidir) ---
-    let whereClause = "";
-    let queryParams = [];
-
-    palabrasBase.forEach((pal, index) => {
-        const formas = expandirFormas(pal);
-        const conditions = formas.map(() => "descripcion LIKE ?");
-        whereClause += `(${conditions.join(" OR ")})`;
-        if (index < palabrasBase.length - 1) whereClause += " AND ";
-        formas.forEach(f => queryParams.push(`%${f}%`));
-    });
+    // Obtenemos todos los productos que coincidan con AL MENOS UNA palabra
+    const expandedAllTerms = [...new Set(palabrasBase.flatMap(expandirFormas))];
+    const orConditions = expandedAllTerms.map(() => "descripcion LIKE ?");
+    const orParams = expandedAllTerms.map(p => `%${p}%`);
 
     try {
-        const sql = `SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ${stockCondition} AND ${whereClause} LIMIT 8`;
-        const [rows] = await pool.execute(sql, queryParams);
-        if (rows.length > 0) return rows; // Si encontró coincidencia total, retornamos inmediatamente.
-    } catch (e) {
-        console.log("Error Intento 1:", e.message);
-    }
+        const [allMatches] = await pool.execute(
+            `SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ${stockCondition} AND ${orConditions.join(" OR ")}`,
+            orParams
+        );
 
-    // --- PRIORIDAD 2: BÚSQUEDA POR RELEVANCIA (Solo si el AND falló) ---
-    let minRelevance = 1;
-    if (palabrasBase.length >= 3) minRelevance = 2; 
-    if (palabrasBase.length >= 5) minRelevance = 3;
+        if (allMatches.length === 0) return null;
 
-    const expandedTerms = [...new Set(palabrasBase.flatMap(expandirFormas))];
-    const orConditions = expandedTerms.map(() => "descripcion LIKE ?");
-    const orParams = expandedTerms.map(p => `%${p}%`);
-
-    const relevanceParts = palabrasBase.map(p => {
-        const formas = expandirFormas(p);
-        const cases = formas.map(f => `descripcion LIKE '%${f.replace(/[^a-z]/g, '')}%'`);
-        return `(CASE WHEN ${cases.join(' OR ')} THEN 1 ELSE 0 END)`;
-    });
-    const relevanceSQL = relevanceParts.join(' + ');
-
-    try {
-        const sqlRelevancia = `
-            SELECT producto, descripcion, tipo, precio_final 
-            FROM tab_productos 
-            WHERE ${stockCondition} AND ${orConditions.join(" OR ")} 
-            HAVING (${relevanceSQL}) >= ? 
-            ORDER BY ${relevanceSQL} DESC 
-            LIMIT 8`;
+        // Calculamos la relevancia real: ¿Cuántas palabras de la consulta coinciden con la descripción?
+        const scoredProducts = allMatches.map(prod => {
+            let matchCount = 0;
+            const desc = prod.descripcion.toLowerCase();
             
-        const [rows] = await pool.execute(sqlRelevancia, [...orParams, minRelevance]);
-        if (rows.length > 0) return rows;
-    } catch (e) {
-        console.log("Error Intento 2:", e.message);
-    }
+            palabrasBase.forEach(pal => {
+                const formas = expandirFormas(pal);
+                if (formas.some(f => desc.includes(f))) {
+                    matchCount++;
+                }
+            });
+            
+            return { ...prod, score: matchCount };
+        });
 
-    return null;
+        // Encontramos el puntaje más alto entre todos los productos encontrados
+        const maxScore = Math.max(...scoredProducts.map(p => p.score));
+
+        // REGLA DE ORO: Solo mostrar productos que tengan el puntaje MÁXIMO.
+        // Si el mejor producto coincide en 3 palabras (ej. Rolineras, Delanteras, Fiesta),
+        // NO mostraremos los que coincidan en 2 (ej. Rolineras, Delanteras, Aveo).
+        const bestMatches = scoredProducts
+            .filter(p => p.score === maxScore)
+            .slice(0, 8); // Limite a 8 resultados
+
+        return bestMatches.length > 0 ? bestMatches : null;
+
+    } catch (e) {
+        console.log("Error en búsqueda de productos:", e.message);
+        return null;
+    }
 }
 
 async function obtenerDetalleFacturas(id_cliente, id_vendedor = null) {
@@ -348,9 +338,6 @@ async function checkNuevasFacturas() {
 
             await pool.execute("UPDATE tab_facturas SET whatsapp_notificado = 'SI' WHERE id_factura = ?", [f.id_factura]);
             await sleep(1000);
-        }
-        if (facturas.length > 0) {
-            console.log(`[NOTIFICADOR] ${facturas.length} factura(s) notificada(s).`);
         }
     } catch (e) {
         console.log("[NOTIFICADOR] Error:", e.message);
@@ -406,10 +393,6 @@ async function checkFacturasVencidas() {
                 await sleep(1000);
             }
         }
-
-        if (cont > 0) {
-            console.log(`[RECORDATORIO] ${cont} cliente(s) notificado(s).`);
-        }
     } catch (e) {
         console.log("[RECORDATORIO] Error:", e.message);
     } finally {
@@ -417,9 +400,7 @@ async function checkFacturasVencidas() {
     }
 }
 
-// ===== RECORDATORIO A VENDEDORES =====
 let vendedorEjecutando = false;
-
 async function checkVendedoresRecordatorio() {
     if (!isBotReady() || vendedorEjecutando) return;
     vendedorEjecutando = true;
@@ -467,7 +448,6 @@ async function checkVendedoresRecordatorio() {
         }
 
         await notificador.marcarEnvioVendedor();
-        console.log(`[VENDEDORES] ${Object.keys(vendedoresMap).length} vendedor(es) notificado(s).`);
     } catch (e) {
         console.log("[VENDEDORES] Error:", e.message);
     } finally {
@@ -551,10 +531,11 @@ async function startBot() {
             const esRIFPuro = /^[vjgje]?\d+$/i.test(rawText.replace(/[^a-zA-Z0-9]/g, '')) && rawText.length >= 6;
 
             await guardarMensaje(from, 'user', rawText);
+
             const sesion = await getSesion(from);
             if (sesion && sesion.modo === 'humano' && !isAdmin) return;
 
-            // --- 1. LÓGICA DE RIF (SÓLO ADMINS) ---
+            // --- 1. LÓGICA DE RIF (ADMINS) ---
             if (isAdmin && esRIFPuro) {
                 const rifLimpio = limpiarRIF(rawText);
                 const c = await buscarCliente(rifLimpio);
@@ -563,6 +544,7 @@ async function startBot() {
                     const facturas = await obtenerDetalleFacturas(c.id_cliente);
                     let totalP = 0; 
                     let list = `⭐ *CONSULTA DE ESTADO DE CUENTA (ADMIN)*\nCliente: ${c.nombres}\nRIF: ${rifLimpio}\n\n`;
+                    
                     if (facturas.length === 0) {
                         list += `✅ Sin facturas pendientes.`;
                     } else {
@@ -580,12 +562,11 @@ async function startBot() {
                 }
             }
 
-            // --- 2. LÓGICA DE DESPACHOS Y TIEMPOS (NUEVO) ---
+            // --- 2. LÓGICA DE DESPACHO Y PEDIDOS (NUEVO) ---
             if (text.includes("cuando llega mi pedido") || 
                 text.includes("tiempo tardan en despachar") || 
-                text.includes("cuando me llega") || 
-                text.includes("tiempo de entrega") || 
-                text.includes("cuanto tarda el envio")) {
+                text.includes("pedido hoy cuando me llega") ||
+                (text.includes("pedido") && text.includes("llega"))) {
                 return await safeSendMessage(from, { text: "Saludos estimado cliente, su pedido esta disponible en un lapso no mayor de 24 horas" });
             }
 
@@ -594,7 +575,7 @@ async function startBot() {
                 return await safeSendMessage(from, { text: "Saludos este es Nuestro Pago Movil\n04142423348\nV12959286\nBanesco" });
             }
 
-            // --- 4. LÓGICA DE PRODUCTOS ---
+            // --- 4. LÓGICA DE PRODUCTOS (Optimizado por Coincidencia Máxima) ---
             if (text !== 'menu' && !['hola', 'buen dia', 'buenos dias'].includes(text)) {
                 try {
                     const prods = await buscarProductoPorTexto(rawText);
@@ -606,6 +587,7 @@ async function startBot() {
                             "Hola, un placer saludarle. He encontrado estos productos que coinciden con su búsqueda: 👇"
                         ];
                         const saludoAzar = saludos[Math.floor(Math.random() * saludos.length)];
+
                         await safeSendMessage(from, { text: saludoAzar });
                         await sleep(1500);
 
@@ -637,7 +619,7 @@ async function startBot() {
                 }
             }
 
-            // --- 6. SALUDO Y MENÚ ---
+            // --- 6. SALUDO CORDIAL Y MENU ---
             if (text === 'menu' || text === 'hola' || text === 'buen dia' || text === 'buenos dias') {
                 const nombreUsuario = vendedor ? vendedor.nombre : pushName;
                 const saludoCordial = `¡Hola *${nombreUsuario}*! Es un gusto saludarte. 😊\n\n¿En qué podemos ayudarte hoy? Por favor, indícanos qué servicio necesitas o consulta nuestro menú a continuación:\n\n${MENU_TEXT}`;
@@ -664,6 +646,7 @@ async function startBot() {
             // --- 7. FALLBACK ---
             const conversationalShorts = ['si', 'no', 'ok', 'vale', 'gracias', 'ya', 'entendido', 'está bien', 'bueno', 'dale', 'está ok', 'está bien', 'claro'];
             if (conversationalShorts.includes(text)) return; 
+
             if (rawText.length > 500) return;
 
             await safeSendMessage(from, { text: "Lo siento, no logré entender tu solicitud. 😕 ¿Podrías darme más detalles o escribir *menu* para ver nuestras opciones?" });
@@ -676,6 +659,7 @@ const server = http.createServer(async (req, res) => {
     const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const query = Object.fromEntries(parsedUrl.searchParams.entries());
     const header = `<nav class="navbar navbar-dark bg-dark mb-4 shadow"><div class="container"><a class="navbar-brand fw-bold" href="/">ONE4CARS ADMIN</a></div></nav>`;
+    
     const routename = parsedUrl.pathname;
 
     if (routename === '/cobranza') {
@@ -744,17 +728,112 @@ const server = http.createServer(async (req, res) => {
             if (fs.existsSync('auth_info')) {
                 fs.rmSync('auth_info', { recursive: true, force: true });
             }
-            res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Sesión borrada</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="5;url=/"> </head><body class="bg-light"><div class="container mt-5 text-center"><div class="card shadow p-5 mx-auto" style="max-width:500px;border-radius:15px;"><h3>✅ Sesión borrada</h3><p class="mt-3">La carpeta <strong>auth_info</strong> se eliminó correctamente.</p><p>El bot mostrará un nuevo código QR en <strong>5 segundos</strong>.</p><a href="/" class="btn btn-primary mt-3">Ir al inicio</a></div></div></body></html>`);
-        } catch (e) { res.end("Error al borrar sesión: " + e.message); }
+            res.end(`<!DOCTYPE html>
+            <html><head><meta charset="UTF-8"><title>Sesión borrada</title>
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+            <meta http-equiv="refresh" content="5;url=/">
+            </head><body class="bg-light">
+            <div class="container mt-5 text-center">
+            <div class="card shadow p-5 mx-auto" style="max-width:500px;border-radius:15px;">
+            <h3>✅ Sesión borrada</h3>
+            <p class="mt-3">La carpeta <strong>auth_info</strong> se eliminó correctamente.</p>
+            <p>El bot mostrará un nuevo código QR en <strong>5 segundos</strong>.</p>
+            <p class="text-muted small">Escanea el QR desde WhatsApp → Dispositivos vinculados → Vincular un dispositivo</p>
+            <a href="/" class="btn btn-primary mt-3">Ir al inicio</a>
+            </div></div></body></html>`);
+        } catch (e) {
+            res.end("Error al borrar sesión: " + e.message);
+        }
     } else if (routename === '/notificador-estado') {
         const total = await notificador.obtenerFacturasNoNotificadasCount();
-        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Notificador</title></head><body class="bg-light">${header}<div class="container mt-5"><div class="card shadow-lg p-4 mx-auto" style="max-width: 600px; border-radius: 15px;"><h3>📬 Notificador</h3><hr><p>Facturas pendientes: <strong>${total}</strong></p><p>Estado: ${isBotReady() ? '<span class="text-success">🟢 Online</span>' : '<span class="text-danger">🔴 Offline</span>'}</p><a href="/" class="btn btn-outline-secondary mt-3">Volver</a></div></div></body></html>`);
+        res.end(`<!DOCTYPE html>
+        <html lang="es">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+            <title>Notificador - ONE4CARS</title>
+        </head>
+        <body class="bg-light">
+            ${header}
+            <div class="container mt-5">
+                <div class="card shadow-lg p-4 mx-auto" style="max-width: 600px; border-radius: 15px;">
+                    <h3 class="mb-3">📬 Notificador de Facturas</h3>
+                    <hr>
+                    <p>Facturas pendientes por notificar: <strong>${total}</strong></p>
+                    <p>Estado del Bot: ${isBotReady() ? '<span class="text-success">🟢 Online</span>' : '<span class="text-danger">🔴 Offline</span>'}</p>
+                    <p class="text-muted small mt-3">El sistema verifica cada 45 segundos si hay nuevas facturas sin notificar.</p>
+                    <a href="/" class="btn btn-outline-secondary mt-3">Volver</a>
+                </div>
+            </div>
+        </body></html>`);
     } else if (routename === '/recordatorio-estado') {
         const facturas = await notificador.obtenerFacturasVencidas();
         const enviados = await notificador.obtenerRecordatoriosEnviados();
-        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Recordatorios</title></head><body class="bg-light">${header}<div class="container mt-5"><div class="card shadow-lg p-4 mx-auto" style="max-width: 800px; border-radius: 15px;"><h3>📅 Recordatorios</h3><hr><table class="table table-sm"><thead><tr><th>Factura</th><th>Cliente</th><th>Días</th><th>Estado</th></tr></thead><tbody>${facturas.map(f => `<tr><td>${f.nro_factura}</td><td>${f.nombres}</td><td>${f.dias_vencida}</td><td>${(enviados[f.id_factura]) ? '✅' : '⏳'}</td></tr>`).join('')}</tbody></table><a href="/" class="btn btn-outline-secondary">Volver</a></div></div></body></html>`);
+        res.end(`<!DOCTYPE html>
+        <html lang="es">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+            <title>Recordatorios - ONE4CARS</title>
+        </head>
+        <body class="bg-light">
+            ${header}
+            <div class="container mt-5">
+                <div class="card shadow-lg p-4 mx-auto" style="max-width: 800px; border-radius: 15px;">
+                    <h3 class="mb-3">📅 Recordatorios de Facturas Vencidas</h3>
+                    <hr>
+                    <table class="table table-sm">
+                        <thead><tr><th>Factura</th><th>Cliente</th><th>Días</th><th>Nivel</th><th>Estado</th></tr></thead>
+                        <tbody>
+                        ${facturas.map(f => {
+                            const dias = f.dias_vencida;
+                            const nivel = dias >= 60 ? 60 : dias >= 50 ? 50 : dias >= 40 ? 40 : 30;
+                            const yaEnviado = enviados[f.id_factura] && enviados[f.id_factura].includes(nivel);
+                            return `<tr>
+                                <td>${f.nro_factura}</td>
+                                <td>${f.nombres}</td>
+                                <td>${dias}</td>
+                                <td>${nivel}+</td>
+                                <td>${yaEnviado ? '<span class="text-success">✅ Enviado</span>' : '<span class="text-warning">⏳ Pendiente</span>'}</td>
+                            </tr>`;
+                        }).join('')}
+                        </tbody>
+                    </table>
+                    <p class="text-muted small">Clientes: notificación única por nivel (30, 40, 50, 60 días). Vendedores: resumen cada 3 días hábiles.</p>
+                    <a href="/" class="btn btn-outline-secondary">Volver</a>
+                </div>
+            </div>
+        </body></html>`);
     } else {
-        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="30"><title>Admin ONE4CARS</title></head><body style="background-color: #f4f7f6;">${header}<div class="container text-center"><div class="card shadow-lg p-4 mx-auto" style="max-width: 500px; border-radius: 15px;"><h4 class="mb-3">Estado del Bot</h4><div class="my-4">${qrCodeData.startsWith('data') ? `<img src="${qrCodeData}" class="img-fluid rounded" style="max-width: 250px;">` : `<h2 class="text-success">${qrCodeData}</h2>`}</div><p>BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}</p><div class="d-grid gap-2"><a href="/cobranza" class="btn btn-primary">PANEL DE COBRANZA</a><a href="/marketing-panel" class="btn btn-info text-white">PANEL DE MARKETING</a><a href="/notificador-estado" class="btn btn-secondary text-white">NOTIFICADOR</a><a href="/recordatorio-estado" class="btn btn-warning text-dark">RECORDATORIOS</a></div></div></div></body></html>`);
+        res.end(`<!DOCTYPE html>
+        <html lang="es">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+            <meta http-equiv="refresh" content="30">
+            <title>Admin ONE4CARS</title>
+        </head>
+        <body style="background-color: #f4f7f6;">
+            ${header}
+            <div class="container text-center">
+                <div class="card shadow-lg p-4 mx-auto" style="max-width: 500px; border-radius: 15px;">
+                    <h4 class="mb-3">Estado del Bot</h4>
+                    <div class="my-4">
+                        ${qrCodeData.startsWith('data') ? `<img src="${qrCodeData}" class="img-fluid rounded" style="max-width: 250px;">` : `<h2 class="text-success">${qrCodeData}</h2>`}
+                    </div>
+                    <p>BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}</p>
+                    <div class="d-grid gap-2">
+                        <a href="/cobranza" class="btn btn-primary">PANEL DE COBRANZA</a>
+                        <a href="/marketing-panel" class="btn btn-info text-white">PANEL DE MARKETING</a>
+                        <a href="/notificador-estado" class="btn btn-secondary text-white">NOTIFICADOR</a>
+                        <a href="/recordatorio-estado" class="btn btn-warning text-dark">RECORDATORIOS</a>
+                    </div>
+                </div>
+            </div>
+        </body></html>`);
     }
 });
 
