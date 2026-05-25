@@ -188,19 +188,51 @@ async function buscarCliente(rifLimpio) {
     return r[0] || null;
 }
 
-// ==========================================================================================
-// BÚSQUEDA DE PRODUCTOS CON FILTRO ABSOLUTO DE MARCA/MODELO
-// ==========================================================================================
+/**
+ * BÚSQUEDA DE PRODUCTOS OPTIMIZADA
+ * Prioridad 1: Coincidencia ESTRICTA (AND) - Todas las palabras deben estar.
+ * Prioridad 2: Coincidencia por RELEVANCIA - Solo si la prioridad 1 falló.
+ */
 async function buscarProductoPorTexto(texto) {
     const txtNormal = normalizar(texto);
-    const stopWords = ['tienes', 'la', 'del', 'quiere', 'saber', 'cuanto', 'mide', 'venden', 'donde', 'precio', 'tienen', 'el', 'una', 'un', 'hay', 'si', 'es', 'de', 'con', 'para', 'busco', 'hola', 'buenos', 'buenas', 'dias', 'tardes', 'noches', 'como', 'estas', 'esta', 'familia', 'espero', 'encuentres', 'encuenters', 'bien', 'queria', 'preguntarte', 'gracias', 'por', 'favor', 'ayuda', 'puedes', 'podrias', 'quisiera', 'necesito', 'saludos', 'cordial', 'muchas', 'todo', 'bienvenidos', 'bendiciones', 'exito', 'exitos', 'dia', 'tarde', 'noche', 'pregunta', 'consulta', 'atento', 'atenta', 'saludo', 'estimados', 'estimado', 'buen', 'buena', 'bueno', 'se', 'me', 'le', 'te', 'lo', 'los', 'las', 'les', 'su', 'sus', 'mi', 'mis', 'tu', 'tus', 'nos', 'os', 'que', 'cual', 'cuales', 'quien', 'quienes', 'cuando', 'porque', 'pues', 'pero', 'mas', 'muy', 'asi', 'aun', 'entre', 'sin', 'sobre', 'tras', 'durante', 'mediante', 'excepto', 'segun', 'puede', 'puedo', 'pueden', 'podemos', 'podria', 'hacer', 'hace', 'hacen', 'ser', 'estar', 'tener', 'tengo', 'tenemos', 'tiene', 'decir', 'dice', 'dicen', 'digo', 'ver', 'veo', 'ven', 'vez', 'veces', 'quiero', 'quiere', 'quieren', 'queremos', 'gustaria', 'gusta', 'gustan', 'gusto', 'necesita', 'necesitan', 'necesitamos', 'pueda','UNID.','unid.','unidades','unidad','UNIDADES','unidades', 'puedas', 'pudiera', 'pudieras', 'listo', 'claro', 'ok', 'okey', 'vale', 'va', 'vamos', 'vaya', 'algun', 'alguna', 'algunos', 'algunas', 'ningun', 'ninguna', 'tipo', 'tipos', 'preguntar', 'disculpa', 'disculpe', 'permiso', 'ayudar', 'apoyo', 'consulta', 'consultar', 'info', 'informacion', 'decirme', 'dime', 'avísame', 'avisa', 'saber', 'sabes', 'saben', 'sabemos', 'pana', 'panas', 'brother', 'bro', 'amigo', 'amigos', 'compa', 'compadre', 'ando', 'andas', 'andan', 'andaba', 'andabas', 'andabamos', 'andaban', 'estoy', 'estas', 'esta', 'estaba', 'estabas', 'estabamos', 'estaban', 'vengo', 'vienes', 'viene', 'vienen', 'venia', 'venias', 'veniamos', 'venian', 'voy', 'vas', 'va', 'vamos', 'van', 'iba', 'ibas', 'ibamos', 'iban'];
-    
-    const marcasModelos = ['fiesta', 'aveo', 'corsa', 'optra', 'spark', 'matiz', 'esteeem', 'swift', 'focus', 'ecosport', 'ka', 'monza', 'esperos', 'lanos', 'nubira', 'crossfox', 'saveiro', 'toyota', 'ford', 'chevrolet', 'hyundai', 'kia', 'nissan', 'mazda', 'honda', 'vw', 'volkswagen'];
+    const stopWords = [
+        'tienes', 'la', 'del', 'quiere', 'saber', 'cuanto', 'mide', 'venden', 'donde',
+        'precio', 'tienen', 'el', 'una', 'un', 'hay', 'si', 'es', 'de', 'con', 'para',
+        'busco', 'hola', 'buenos', 'buenas', 'dias', 'tardes', 'noches', 'como', 'estas',
+        'esta', 'familia', 'espero', 'encuentres', 'encuenters', 'bien', 'queria',
+        'preguntarte', 'gracias', 'por', 'favor', 'ayuda', 'puedes', 'podrias',
+        'quisiera', 'necesito', 'saludos', 'cordial', 'muchas', 'todo', 'bienvenidos',
+        'bendiciones', 'exito', 'exitos', 'dia', 'tarde', 'noche', 'pregunta', 'consulta',
+        'atento', 'atenta', 'saludo', 'estimados', 'estimado', 'buen', 'buena', 'bueno',
+        'se', 'me', 'le', 'te', 'lo', 'los', 'las', 'les', 'su', 'sus', 'mi', 'mis',
+        'tu', 'tus', 'nos', 'os', 'que', 'cual', 'cuales', 'quien', 'quienes',
+        'cuando', 'porque', 'pues', 'pero', 'mas', 'muy', 'asi', 'aun', 'entre', 'sin',
+        'sobre', 'tras', 'durante', 'mediante', 'excepto', 'segun', 'puede', 'puedo',
+        'pueden', 'podemos', 'podria', 'hacer', 'hace', 'hacen', 'ser', 'estar', 'tener',
+        'tengo', 'tenemos', 'tiene', 'decir', 'dice', 'dicen', 'digo', 'ver', 'veo',
+        'ven', 'vez', 'veces', 'quiero', 'quiere', 'quieren', 'queremos', 'gustaria',
+        'gusta', 'gustan', 'gusto', 'necesita', 'necesitan', 'necesitamos', 'pueda','UNID.','unid.','unidades','unidad','UNIDADES','unidades',
+        'puedas', 'pudiera', 'pudieras', 'listo', 'claro', 'ok', 'okey', 'vale', 'va',
+        'vamos', 'vaya', 'algun', 'alguna', 'algunos', 'algunas', 'ningun', 'ninguna',
+        'tipo', 'tipos', 'preguntar', 'disculpa', 'disculpe', 'permiso', 'ayudar',
+        'apoyo', 'consulta', 'consultar', 'info', 'informacion', 'decirme', 'dime',
+        'avísame', 'avisa', 'saber', 'sabes', 'saben', 'sabemos',
+        'pana', 'panas', 'brother', 'bro', 'amigo', 'amigos', 'compa', 'compadre',
+        'ando', 'andas', 'andan', 'andaba', 'andabas', 'andabamos', 'andaban',
+        'estoy', 'estas', 'esta', 'estaba', 'estabas', 'estabamos', 'estaban',
+        'vengo', 'vienes', 'viene', 'vienen', 'venia', 'venias', 'veniamos', 'venian',
+        'voy', 'vas', 'va', 'vamos', 'van', 'iba', 'ibas', 'ibamos', 'iban',
+        'llegando', 'pais', 'país', 'atento'
+    ];
 
-    const palabrasBase = txtNormal.split(' ').filter(p => p.length > 2 && !stopWords.includes(p));
+    const palabrasBase = txtNormal.split(' ')
+        .filter(p => p.length > 2 && !stopWords.includes(p));
+
     if (palabrasBase.length === 0) return null;
 
-    const criticas = palabrasBase.filter(p => marcasModelos.includes(p));
+    const positionalWords = ['superior', 'sup', 'inferior', 'inf', 'interno', 'int', 'externo', 'ext', 'derecha', 'der', 'izquierda', 'izq'];
+    const isOnlyPositional = palabrasBase.every(p => positionalWords.includes(p));
+    if (isOnlyPositional) return null;
 
     const expandirFormas = (pal) => {
         const f = [pal];
@@ -214,19 +246,11 @@ async function buscarProductoPorTexto(texto) {
     };
 
     const stockCondition = "(cantidad_existencia + cantidad_existencia_almacen > 0)";
-
-    // Filtro absoluto de marca/modelo
-    let absoluteFilter = "";
-    let absoluteParams = [];
-    if (criticas.length > 0) {
-        const conditions = criticas.map(() => "descripcion LIKE ?");
-        absoluteFilter = ` AND (${conditions.join(" OR ")})`;
-        criticas.forEach(p => absoluteParams.push(`%${p}%`));
-    }
-
-    // --- INTENTO 1: BÚSQUEDA ESTRICTA (AND) ---
+    
+    // --- PRIORIDAD 1: BÚSQUEDA ESTRICTA (Todo debe coincidir) ---
     let whereClause = "";
     let queryParams = [];
+
     palabrasBase.forEach((pal, index) => {
         const formas = expandirFormas(pal);
         const conditions = formas.map(() => "descripcion LIKE ?");
@@ -236,14 +260,17 @@ async function buscarProductoPorTexto(texto) {
     });
 
     try {
-        const sql = `SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ${stockCondition} AND ${whereClause} ${absoluteFilter} LIMIT 8`;
-        const [rows] = await pool.execute(sql, [...queryParams, ...absoluteParams]);
-        if (rows.length > 0) return rows;
-    } catch (e) { console.log("Error Intento 1:", e.message); }
+        const sql = `SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ${stockCondition} AND ${whereClause} LIMIT 8`;
+        const [rows] = await pool.execute(sql, queryParams);
+        if (rows.length > 0) return rows; // Si encontró coincidencia total, retornamos inmediatamente.
+    } catch (e) {
+        console.log("Error Intento 1:", e.message);
+    }
 
-    // --- INTENTO 2: BÚSQUEDA POR RELEVANCIA (SÓLO SI EL ESTRICTO FALLÓ) ---
+    // --- PRIORIDAD 2: BÚSQUEDA POR RELEVANCIA (Solo si el AND falló) ---
     let minRelevance = 1;
-    if (palabrasBase.length >= 3) minRelevance = 2;
+    if (palabrasBase.length >= 3) minRelevance = 2; 
+    if (palabrasBase.length >= 5) minRelevance = 3;
 
     const expandedTerms = [...new Set(palabrasBase.flatMap(expandirFormas))];
     const orConditions = expandedTerms.map(() => "descripcion LIKE ?");
@@ -260,15 +287,16 @@ async function buscarProductoPorTexto(texto) {
         const sqlRelevancia = `
             SELECT producto, descripcion, tipo, precio_final 
             FROM tab_productos 
-            WHERE ${stockCondition} AND (${orConditions.join(" OR ")}) ${absoluteFilter} 
+            WHERE ${stockCondition} AND ${orConditions.join(" OR ")} 
             HAVING (${relevanceSQL}) >= ? 
             ORDER BY ${relevanceSQL} DESC 
             LIMIT 8`;
             
-        // Orden correcto de parámetros: ORParams, AbsoluteParams, minRelevance
-        const [rows] = await pool.execute(sqlRelevancia, [...orParams, ...absoluteParams, minRelevance]);
+        const [rows] = await pool.execute(sqlRelevancia, [...orParams, minRelevance]);
         if (rows.length > 0) return rows;
-    } catch (e) { console.log("Error Intento 2:", e.message); }
+    } catch (e) {
+        console.log("Error Intento 2:", e.message);
+    }
 
     return null;
 }
@@ -317,10 +345,18 @@ async function checkNuevasFacturas() {
                     await safeSendMessage(jidV, { text: msgV });
                 }
             }
+
             await pool.execute("UPDATE tab_facturas SET whatsapp_notificado = 'SI' WHERE id_factura = ?", [f.id_factura]);
             await sleep(1000);
         }
-    } catch (e) { console.log("[NOTIFICADOR] Error:", e.message); } finally { notificadorEjecutando = false; }
+        if (facturas.length > 0) {
+            console.log(`[NOTIFICADOR] ${facturas.length} factura(s) notificada(s).`);
+        }
+    } catch (e) {
+        console.log("[NOTIFICADOR] Error:", e.message);
+    } finally {
+        notificadorEjecutando = false;
+    }
 }
 
 // ===== RECORDATORIOS DE FACTURAS VENCIDAS =====
@@ -348,12 +384,15 @@ async function checkFacturasVencidas() {
         const facturas = await notificador.obtenerFacturasVencidas();
         const enviados = await notificador.obtenerRecordatoriosEnviados();
         let cont = 0;
+
         for (const f of facturas) {
             const dias = f.dias_vencida;
             const nivel = obtenerNivelRecordatorio(dias);
             if (!nivel) continue;
+
             const monto = (parseFloat(f.total) - parseFloat(f.abono_factura || 0)) / (parseFloat(f.porcentaje) || 1);
             if (monto <= 0) continue;
+
             const fecha = new Date(f.fecha_reg).toISOString().split('T')[0];
             const yaEnviado = enviados[f.id_factura] && enviados[f.id_factura].includes(nivel);
             if (!yaEnviado) {
@@ -367,7 +406,15 @@ async function checkFacturasVencidas() {
                 await sleep(1000);
             }
         }
-    } catch (e) { console.log("[RECORDATORIO] Error:", e.message); } finally { recordatorioEjecutando = false; }
+
+        if (cont > 0) {
+            console.log(`[RECORDATORIO] ${cont} cliente(s) notificado(s).`);
+        }
+    } catch (e) {
+        console.log("[RECORDATORIO] Error:", e.message);
+    } finally {
+        recordatorioEjecutando = false;
+    }
 }
 
 // ===== RECORDATORIO A VENDEDORES =====
@@ -379,21 +426,27 @@ async function checkVendedoresRecordatorio() {
     try {
         const hoy = new Date().getDay();
         if (hoy === 0 || hoy === 6) return;
+
         const ultimo = await notificador.obtenerUltimoEnvioVendedor();
         if (ultimo) {
             const diff = Math.floor((new Date() - new Date(ultimo)) / 86400000);
             if (diff < 3) return;
         }
+
         const facturas = await notificador.obtenerFacturasVencidasAll();
         const vendedoresMap = {};
+
         for (const f of facturas) {
             const dias = f.dias_vencida;
             if (dias < 30) continue;
+
             let monto = (parseFloat(f.total) - parseFloat(f.abono_factura || 0)) / (parseFloat(f.porcentaje) || 1);
             if (monto <= 0 || !f.celular_vendedor) continue;
+
             if (f.vendedor_nombre && f.vendedor_nombre.toUpperCase() === 'MANUEL FERRAZ') {
                 monto = monto / 0.80;
             }
+
             const key = f.celular_vendedor.toString().replace(/\D/g, '');
             if (!vendedoresMap[key]) {
                 vendedoresMap[key] = {
@@ -404,6 +457,7 @@ async function checkVendedoresRecordatorio() {
             }
             vendedoresMap[key].facturas.push(`🔹 *N° ${f.nro_factura}* - ${f.nombres} - $${monto.toFixed(2)} (${dias} días)`);
         }
+
         for (const key of Object.keys(vendedoresMap)) {
             const v = vendedoresMap[key];
             if (!v.jid || v.facturas.length === 0) continue;
@@ -411,8 +465,14 @@ async function checkVendedoresRecordatorio() {
             await safeSendMessage(v.jid, { text: msg });
             await sleep(1000);
         }
+
         await notificador.marcarEnvioVendedor();
-    } catch (e) { console.log("[VENDEDORES] Error:", e.message); } finally { vendedorEjecutando = false; }
+        console.log(`[VENDEDORES] ${Object.keys(vendedoresMap).length} vendedor(es) notificado(s).`);
+    } catch (e) {
+        console.log("[VENDEDORES] Error:", e.message);
+    } finally {
+        vendedorEjecutando = false;
+    }
 }
 
 // ===== BOT WHATSAPP =====
@@ -424,8 +484,10 @@ async function startBot() {
         } catch (e) {}
         socketBot = null;
     }
+
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
     const { version } = await fetchLatestBaileysVersion();
+
     const sock = makeWASocket({
         version,
         auth: state,
@@ -433,8 +495,10 @@ async function startBot() {
         printQRInTerminal: false,
         browser: ["ONE4CARS MASTER", "Chrome", "1.0.0"]
     });
+
     socketBot = sock;
     sock.ev.on('creds.update', saveCreds);
+
     sock.ev.on('connection.update', (u) => {
         const { connection, lastDisconnect, qr } = u;
         if (qr) qrcode.toDataURL(qr, { scale: 10 }, (_, url) => qrCodeData = url);
@@ -446,17 +510,13 @@ async function startBot() {
                 setInterval(checkFacturasVencidas, 86400000);
                 setInterval(checkVendedoresRecordatorio, 86400000);
                 setInterval(() => {
-                    if (!isBotReady() && socketBot) {
-                        startBot();
-                    }
+                    if (!isBotReady() && socketBot) startBot();
                 }, 300000);
             }
         }
         if (connection === 'close') {
             const r = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (r) {
-                setTimeout(() => startBot(), 5000);
-            }
+            if (r) setTimeout(() => startBot(), 5000);
         }
     });
 
@@ -465,8 +525,10 @@ async function startBot() {
             if (type !== 'notify') return;
             const msg = messages[0];
             if (!msg.message) return;
+
             const from = msg.key.remoteJid;
             if (from === 'status@broadcast' || from.includes('@g.us')) return;
+
             const isAdmin = ADMIN_IDS.some(id => from.includes(id));
             const vendedor = await buscarVendedor(from, msg.pushName || "Vendedor");
 
@@ -484,6 +546,7 @@ async function startBot() {
             const pushName = msg.pushName || "Usuario";
             const rawText = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").trim();
             if (!rawText) return;
+
             const text = normalizar(rawText);
             const esRIFPuro = /^[vjgje]?\d+$/i.test(rawText.replace(/[^a-zA-Z0-9]/g, '')) && rawText.length >= 6;
 
@@ -491,7 +554,7 @@ async function startBot() {
             const sesion = await getSesion(from);
             if (sesion && sesion.modo === 'humano' && !isAdmin) return;
 
-            // --- 1. LÓGICA de RIF (SÓLO ADMINS) ---
+            // --- 1. LÓGICA DE RIF (SÓLO ADMINS) ---
             if (isAdmin && esRIFPuro) {
                 const rifLimpio = limpiarRIF(rawText);
                 const c = await buscarCliente(rifLimpio);
@@ -517,45 +580,21 @@ async function startBot() {
                 }
             }
 
-            // --- 2. LÓGICA DE DESPACHO (CORREGIDA) ---
-            const tiempoWords = ["cuanto", "cuando", "tiempo", "tarda", "tardan", "demora"];
-            const despachoWords = ["despachar", "despacho", "entrega", "envio", "pedido"];
-            if (tiempoWords.some(w => text.includes(w)) && despachoWords.some(w => text.includes(w))) {
+            // --- 2. LÓGICA DE DESPACHOS Y TIEMPOS (NUEVO) ---
+            if (text.includes("cuando llega mi pedido") || 
+                text.includes("tiempo tardan en despachar") || 
+                text.includes("cuando me llega") || 
+                text.includes("tiempo de entrega") || 
+                text.includes("cuanto tarda el envio")) {
                 return await safeSendMessage(from, { text: "Saludos estimado cliente, su pedido esta disponible en un lapso no mayor de 24 horas" });
             }
 
-            // --- 3. LÓGICA DE ESTADO DE CUENTA / REPORTES ---
-            const reporteWords = ["reporte", "actualizado"];
-            const estadoWords = ["estado", "cuenta"];
-            const listadoWords = ["listado", "cobrar"];
-            if ((reporteWords.every(w => text.includes(w))) || (estadoWords.every(w => text.includes(w))) || (listadoWords.every(w => text.includes(w)))) {
-                return await safeSendMessage(from, { text: "2️⃣ *Estado de cuenta:* https://www.one4cars.com/estado_de_cuenta.php/" });
-            }
-
-            // --- 4. LÓGICA DE DATOS BANCARIOS (PRIORIDAD: CUENTA > PAGO MÓVIL) ---
-            const cuentaWords = ["numero de cuenta", "cuenta banesco", "cuenta bancaria", "datos de la cuenta"];
-            const hasCuentaSpec = cuentaWords.some(w => text.includes(w));
-            const hasCuentaGen = text.includes("cuenta") && (text.includes("numero") || text.includes("datos"));
-
-            const pagoWords = ["pago", "movil", "banco", "transferencia", "transferir", "datos"];
-            const solicitudWords = ["envieme", "envia", "pasa", "pasame", "nuevamente", "borro", "perdi", "datos", "forma"];
-            const hasPago = pagoWords.some(w => text.includes(w));
-            const hasSolicitud = solicitudWords.some(w => text.includes(w));
-
-            if (hasCuentaSpec || hasCuentaGen) {
-                return await safeSendMessage(from, { text: "Saludos este es Nuestro Numero de Cuenta\nCuenta Banesco \n01340202752021037690\nRicardo Khabbaze\n12959286" });
-            }
-            if (text.includes("pago movil") || (hasPago && hasSolicitud)) {
+            // --- 3. LÓGICA DE PAGO MÓVIL ---
+            if (text.includes("pago movil") || text.includes("forma de pago") || text.includes("datos")) {
                 return await safeSendMessage(from, { text: "Saludos este es Nuestro Pago Movil\n04142423348\nV12959286\nBanesco" });
             }
 
-            // --- 5. LÓGICA DE NOTIFICACIÓN DE PAGOS/ABONOS ---
-            const frasesPago = ["pago fact", "pago de la nota", "pago de la factura", "abono a la nota", "abono nota", "abono factura", "abono de la factura", "abono"];
-            if (frasesPago.some(frase => text.includes(frase))) {
-                return await safeSendMessage(from, { text: "Recibida la informacion, el departamento de Administarcion confirmara el pago a la brevedad." });
-            }
-
-            // --- 6. LÓGICA DE PRODUCTOS ---
+            // --- 4. LÓGICA DE PRODUCTOS ---
             if (text !== 'menu' && !['hola', 'buen dia', 'buenos dias'].includes(text)) {
                 try {
                     const prods = await buscarProductoPorTexto(rawText);
@@ -569,6 +608,7 @@ async function startBot() {
                         const saludoAzar = saludos[Math.floor(Math.random() * saludos.length)];
                         await safeSendMessage(from, { text: saludoAzar });
                         await sleep(1500);
+
                         for (const p of prods) {
                             if (!isBotReady()) break; 
                             const precioLimpio = parseFloat(p.precio_final || 0).toFixed(2);
@@ -586,7 +626,7 @@ async function startBot() {
                 } catch (e) { console.log("Error en flujo de productos:", e); }
             }
 
-            // --- 7. COMANDOS DE ADMINISTRADOR ---
+            // --- 5. COMANDOS DE ADMINISTRADOR ---
             if (isAdmin) {
                 if (text === 'dolar') {
                     await actualizarDolar();
@@ -597,7 +637,7 @@ async function startBot() {
                 }
             }
 
-            // --- 8. SALUDO CORDIAL Y MENU ---
+            // --- 6. SALUDO Y MENÚ ---
             if (text === 'menu' || text === 'hola' || text === 'buen dia' || text === 'buenos dias') {
                 const nombreUsuario = vendedor ? vendedor.nombre : pushName;
                 const saludoCordial = `¡Hola *${nombreUsuario}*! Es un gusto saludarte. 😊\n\n¿En qué podemos ayudarte hoy? Por favor, indícanos qué servicio necesitas o consulta nuestro menú a continuación:\n\n${MENU_TEXT}`;
@@ -621,9 +661,9 @@ async function startBot() {
                 return await safeSendMessage(from, { text: listado });
             }
 
+            // --- 7. FALLBACK ---
             const conversationalShorts = ['si', 'no', 'ok', 'vale', 'gracias', 'ya', 'entendido', 'está bien', 'bueno', 'dale', 'está ok', 'está bien', 'claro'];
             if (conversationalShorts.includes(text)) return; 
-
             if (rawText.length > 500) return;
 
             await safeSendMessage(from, { text: "Lo siento, no logré entender tu solicitud. 😕 ¿Podrías darme más detalles o escribir *menu* para ver nuestras opciones?" });
@@ -705,9 +745,7 @@ const server = http.createServer(async (req, res) => {
                 fs.rmSync('auth_info', { recursive: true, force: true });
             }
             res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Sesión borrada</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="5;url=/"> </head><body class="bg-light"><div class="container mt-5 text-center"><div class="card shadow p-5 mx-auto" style="max-width:500px;border-radius:15px;"><h3>✅ Sesión borrada</h3><p class="mt-3">La carpeta <strong>auth_info</strong> se eliminó correctamente.</p><p>El bot mostrará un nuevo código QR en <strong>5 segundos</strong>.</p><a href="/" class="btn btn-primary mt-3">Ir al inicio</a></div></div></body></html>`);
-        } catch (e) {
-            res.end("Error al borrar sesión: " + e.message);
-        }
+        } catch (e) { res.end("Error al borrar sesión: " + e.message); }
     } else if (routename === '/notificador-estado') {
         const total = await notificador.obtenerFacturasNoNotificadasCount();
         res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Notificador</title></head><body class="bg-light">${header}<div class="container mt-5"><div class="card shadow-lg p-4 mx-auto" style="max-width: 600px; border-radius: 15px;"><h3>📬 Notificador</h3><hr><p>Facturas pendientes: <strong>${total}</strong></p><p>Estado: ${isBotReady() ? '<span class="text-success">🟢 Online</span>' : '<span class="text-danger">🔴 Offline</span>'}</p><a href="/" class="btn btn-outline-secondary mt-3">Volver</a></div></div></body></html>`);
