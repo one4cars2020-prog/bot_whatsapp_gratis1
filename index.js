@@ -653,7 +653,14 @@ async function startBot() {
                 }
                 return await safeSendMessage(from, { text: menuOption });
             }
-
+         // ============================================================
+            // NUEVO: LÓGICA DE PAGO / ABONO (COLOCAR AQUÍ)
+            // ============================================================
+            if (text === 'pago fact' || text === 'abono' || text.includes('envié el pago') || text.includes('adjunto pago')) {
+                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
+                const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nRecibido tu mensaje, administración validará su pago a la brevedad.\n\n${MENU_TEXT}`;
+                return await safeSendMessage(from, { text: saludoCordial });
+            }
             // --- 3. LÓGICA DE DESPACHOS Y TIEMPOS ---
             if (text.includes("cuando llega mi pedido") || 
                 text.includes("tiempo tardan en despachar") || 
