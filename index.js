@@ -191,8 +191,20 @@ async function buscarCliente(rifLimpio) {
 async function buscarProductoPorTexto(texto) {
     const txtNormal = normalizar(texto);
     
-    // 1. Categorización de palabras para asignar pesos
-    const positionalWords = ['superior', 'sup', 'inferior', 'inf', 'interno', 'int', 'externo', 'ext', 'derecha', 'der', 'delantera', 'trasera', 'izquierda', 'izq', 'rueda'];
+    // 1. Definiciones estrictas
+    const positionalWords = {
+        'delantera': 'trasera',
+        'delanteras': 'trasera',
+        'trasera': 'delantera',
+        'traseras': 'delantera',
+        'superior': 'inferior',
+        'inferior': 'superior',
+        'interno': 'externo',
+        'externo': 'interno',
+        'derecha': 'izquierda',
+        'izquierda': 'derecha'
+    };
+
     const partWords = ['rolinera', 'rodamiento', 'estopera', 'sello', 'amortiguador', 'amort', 'pastilla', 'freno', 'disco', 'bomba', 'correa', 'filtro'];
     
     const sinonimos = {
@@ -230,7 +242,7 @@ async function buscarProductoPorTexto(texto) {
         'ando', 'andas', 'andan', 'andaba', 'andabas', 'andabamos', 'andaban',
         'estoy', 'estas', 'esta', 'estaba', 'estabas', 'estabamos', 'estaban',
         'vengo', 'vienes', 'viene', 'vienen', 'venia', 'venias', 'veniamos', 'venian',
-        'voy', 'vas', 'va', 'vamos', 'van', 'iba', 'ibas', 'ibamos', 'iban'
+        'voy', 'vas', 'va', 'vamos', 'van', 'iba', 'ibas', 'ibamos', 'iban', 'pais', 'llegando'
     ];
 
     const palabrasBase = txtNormal.split(' ')
@@ -238,71 +250,82 @@ async function buscarProductoPorTexto(texto) {
 
     if (palabrasBase.length === 0) return null;
 
-    const expandirFormas = (pal) => {
-        if (sinonimos[pal]) return sinonimos[pal];
-        const f = [pal];
-        if (pal.endsWith('es') && pal.length > 4) f.push(pal.slice(0, -2));
-        if (pal.endsWith('s') && pal.length > 3 && !pal.endsWith('es')) f.push(pal.slice(0, -1));
-        if (!pal.endsWith('s')) {
-            f.push(pal + 's');
-            if (pal.endsWith('z')) f.push(pal.slice(0, -1) + 'ces');
-        }
-        return [...new Set(f)];
-    };
+    let modelWords = [];
+    let partWordsFound = [];
+    let positionWordsFound = [];
+    let oppositeWords = [];
 
-    const stockCondition = "(cantidad_existencia + cantidad_existencia_almacen > 0)";
-    
-    let scoreSQL = "0";
-    let queryParams = [];
-    let modelWordsFound = [];
-
+    // 2. Clasificación de la búsqueda
     palabrasBase.forEach(pal => {
-        const formas = expandirFormas(pal);
-        
-        // DETERMINAR EL PESO DE LA PALABRA
-        let peso = 1; // Default: Pieza (1 punto)
-        if (positionalWords.includes(pal)) {
-            peso = 5; // Posición (5 puntos)
-        } else if (!partWords.includes(pal)) {
-            peso = 10; // Es un Modelo/Marca (10 puntos)
-            modelWordsFound.push(pal);
+        if (positionalWords[pal]) {
+            positionWordsFound.push(pal);
+            oppositeWords.push(positionalWords[pal]);
+        } else if (partWords.includes(pal) || sinonimos[pal]) {
+            partWordsFound.push(pal);
+        } else {
+            modelWords.push(pal); // Todo lo demás se trata como Modelo (Fiesta, Toyota, etc.)
         }
-
-        const conditions = formas.map(() => "descripcion LIKE ?").join(" OR ");
-        scoreSQL += ` + (CASE WHEN ${conditions} THEN ${peso} ELSE 0 END)`;
-        formas.forEach(f => queryParams.push(`%${f}%`));
     });
 
-    try {
-        // FILTRO CRÍTICO: Si el usuario mencionó un modelo (ej. Fiesta), 
-        // obligamos a que la descripción contenga al menos una de esas palabras de modelo.
-        let modelFilter = "";
-        let modelParams = [];
-        if (modelWordsFound.length > 0) {
-            const modelConditions = [];
-            modelWordsFound.forEach(pal => {
-                const formas = expandirFormas(pal);
-                formas.forEach(f => {
-                    modelConditions.push("descripcion LIKE ?");
-                    modelParams.push(`%${f}%`);
-                });
+    const stockCondition = "(cantidad_existencia + cantidad_existencia_almacen > 0)";
+    let whereClause = stockCondition;
+    let queryParams = [];
+
+    // 3. FILTRO ESTRICTO DE MODELO: Si hay modelos, el producto DEBE contener al menos uno
+    if (modelWords.length > 0) {
+        const modelConditions = [];
+        modelWords.forEach(pal => {
+            modelConditions.push("descripcion LIKE ?");
+            queryParams.push(`%${pal}%`);
+        });
+        whereClause += ` AND (${modelConditions.join(" OR ")})`;
+    }
+
+    // 4. FILTRO ESTRICTO DE PIEZA: Si hay piezas, el producto DEBE contener al menos una o su sinónimo
+    if (partWordsFound.length > 0) {
+        const partConditions = [];
+        partWordsFound.forEach(pal => {
+            const formas = sinonimos[pal] || [pal];
+            formas.forEach(f => {
+                partConditions.push("descripcion LIKE ?");
+                queryParams.push(`%${f}%`);
             });
-            modelFilter = ` AND (${modelConditions.join(" OR ")})`;
-        }
+        });
+        whereClause += ` AND (${partConditions.join(" OR ")})`;
+    }
+
+    // 5. FILTRO DE EXCLUSIÓN DE POSICIÓN: Si pide "Delantera", NO puede decir "Trasera"
+    if (oppositeWords.length > 0) {
+        const oppositeConditions = [];
+        oppositeWords.forEach(opp => {
+            oppositeConditions.push("descripcion NOT LIKE ?");
+            queryParams.push(`%${opp}%`);
+        });
+        whereClause += ` AND (${oppositeConditions.join(" AND ")})`;
+    }
+
+    try {
+        // Usamos un sistema de relevancia simple para ordenar, pero el WHERE ya filtró la basura
+        let scoreSQL = "0";
+        let scoreParams = [];
+        palabrasBase.forEach(pal => {
+            scoreSQL += ` + (CASE WHEN descripcion LIKE ? THEN 1 ELSE 0 END)`;
+            scoreParams.push(`%${pal}%`);
+        });
 
         const sql = `
             SELECT producto, descripcion, tipo, precio_final, (${scoreSQL}) as relevancia 
             FROM tab_productos 
-            WHERE ${stockCondition} ${modelFilter}
-            HAVING relevancia > 0 
-            ORDER BY relevancia DESC, descripcion ASC 
+            WHERE ${whereClause} 
+            ORDER BY relevancia DESC 
             LIMIT 8`;
             
-        const [rows] = await pool.execute(sql, [...queryParams, ...modelParams]);
+        // Importante: Los parámetros del SELECT (score) van primero que los del WHERE
+        const [rows] = await pool.execute(sql, [...scoreParams, ...queryParams]);
         
         if (rows.length > 0) return rows;
     } catch (e) {
-        console.log("Error en búsqueda avanzada:", e.message);
+        console.log("Error en búsqueda estricta:", e.message);
     }
 
     return null;
