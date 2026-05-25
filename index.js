@@ -562,17 +562,36 @@ async function startBot() {
                 }
             }
 
-            // --- 2. LÓGICA DE DESPACHO Y PEDIDOS (NUEVO) ---
-const tiempoWords = ["cuanto", "cuando", "como",  "despachan","tiempo", "tarda", "tardan", "demora", "pasado", "no ha llegado el pedido", "el pedido no ha llegado", "está"];
-const despachoWords = ["despachar", "despacho", "llega", "entrega", "envio", "pedido"];
+// ==========================================================================================
+// LÓGICA DE DESPACHO FLEXIBLE (CORREGIDA PARA EVITAR FALSOS POSITIVOS)
+// ==========================================================================================
+const tiempoWords = ["cuanto", "cuando", "tiempo", "tarda", "tardan", "demora"]; // Quitamos "está"
+const despachoWords = ["despachar", "despacho", "entrega", "envio", "pedido"]; // Quitamos "llega" porque es muy común (ej: "vengo llegando")
 
 const hasTiempo = tiempoWords.some(w => text.includes(w));
 const hasDespacho = despachoWords.some(w => text.includes(w));
 
+// Solo responderá si hay una palabra de TIEMPO y una de DESPACHO/PEDIDO
 if (hasTiempo && hasDespacho) {
     return await safeSendMessage(from, { text: "Saludos estimado cliente, su pedido esta disponible en un lapso no mayor de 24 horas" });
 }
+// ==========================================================================================
+// LÓGICA DE ESTADO DE CUENTA / REPORTES
+// ==========================================================================================
+const reporteWords = ["reporte", "actualizado"];
+const estadoWords = ["estado", "cuenta"];
+const listadoWords = ["listado", "cobrar"];
 
+const hasReporte = reporteWords.every(w => text.includes(w)); // Debe tener AMBAS: reporte Y actualizado
+const hasEstado = estadoWords.every(w => text.includes(w));   // Debe tener AMBAS: estado Y cuenta
+const hasListado = listadoWords.every(w => text.includes(w)); // Debe tener AMBAS: listado Y cobrar
+
+if (hasReporte || hasEstado || hasListado) {
+    return await safeSendMessage(from, { 
+        text: "2️⃣ *Estado de cuenta:* https://www.one4cars.com/estado_de_cuenta.php/" 
+    });
+}
+// ==========================================================================================
 // ==========================================================================================
 // LÓGICA DE DATOS BANCARIOS (PAGO MÓVIL vs CUENTA)
 // ==========================================================================================
@@ -602,7 +621,32 @@ if (text.includes("pago movil") || (hasPago && hasSolicitud)) {
     });
 }
 // ==========================================================================================
+// ==========================================================================================
+// ==========================================================================================
+// LÓGICA DE NOTIFICACIÓN DE PAGO Y ABONOS
+// ==========================================================================================
+const frasesPago = [
+    "pago fact", 
+    "pago de la nota", 
+    "pago de la factura", 
+    "abono a la nota", 
+    "abono nota", 
+    "pago de",     
+    "verificar pago",     
+    "comprobante guia de despacho",     
+    "abono factura", 
+    "abono de la factura", 
+    "abono"
+];
 
+// Si el mensaje contiene CUALQUIERA de las frases de la lista
+if (frasesPago.some(frase => text.includes(frase))) {
+    return await safeSendMessage(from, { 
+        text: "Recibida la informacion, el departamento de Administarcion confirmara el pago a la brevedad." 
+    });
+}
+// ==========================================================================================
+// ==========================================================================================
             // --- 4. LÓGICA DE PRODUCTOS (Optimizado por Coincidencia Máxima) ---
             if (text !== 'menu' && !['hola', 'buen dia', 'buenos dias'].includes(text)) {
                 try {
