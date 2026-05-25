@@ -697,7 +697,7 @@ async function startBot() {
 
             // --- 5. COMANDOS DE ADMINISTRADOR ---
             if (isAdmin) {
-                if (text === 'dolar') {
+                if (text === 'dolar' || text === 'bcv' || text === 'paralelo' ) {
                     await actualizarDolar();
                     return await safeSendMessage(from, { text: `💵 BCV: ${dolarInfo.bcv}\n📈 Paralelo: ${dolarInfo.paralelo}` });
                 }
