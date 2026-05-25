@@ -1,3 +1,5 @@
+--- START OF FILE index_nuevo.js ---
+
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode');
@@ -109,6 +111,14 @@ function normalizar(texto) {
         .replace(/[\u0300-\u036f]/g, "") 
         .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?!]/g, "") 
         .toLowerCase()
+        .trim();
+}
+
+// NUEVA FUNCIÓN PARA PRODUCTOS: Mantiene letras, números y la 'x' para medidas
+function limpiarTextoProducto(texto) {
+    return texto
+        .toLowerCase()
+        .replace(/[^a-z0-9x\s]/g, '') // Elimina todo excepto letras, números, espacios y la 'x'
         .trim();
 }
 
@@ -244,7 +254,7 @@ async function buscarCliente(rifLimpio) {
 }
 
 async function buscarProductoPorTexto(texto) {
-    const txtNormal = normalizar(texto);
+    const txtLimpio = limpiarTextoProducto(texto);
     const stopWords = [
         'tienes', 'la', 'del', 'quiere', 'saber', 'cuanto', 'mide', 'venden', 'donde',
         'precio', 'tienen', 'el', 'una', 'un', 'hay', 'si', 'es', 'de', 'con', 'para',
@@ -275,7 +285,7 @@ async function buscarProductoPorTexto(texto) {
         'llegando', 'pais', 'país', 'atento'
     ];
 
-    const palabrasBase = txtNormal.split(' ')
+    const palabrasBase = txtLimpio.split(' ')
         .filter(p => p.length > 2 && !stopWords.includes(p));
 
     if (palabrasBase.length === 0) return null;
@@ -300,7 +310,6 @@ async function buscarProductoPorTexto(texto) {
     let whereClause = "";
     let queryParams = [];
 
-    // Modificación: Ahora busca en producto, descripcion y equivalencia
     palabrasBase.forEach((pal, index) => {
         const formas = expandirFormas(pal);
         const conditions = formas.map(() => "(producto LIKE ? OR descripcion LIKE ? OR equivalencia LIKE ?)");
@@ -324,14 +333,13 @@ async function buscarProductoPorTexto(texto) {
     if (palabrasBase.length >= 5) minRelevance = 3;
 
     const expandedTerms = [...new Set(palabrasBase.flatMap(expandirFormas))];
-    // Modificación: Búsqueda OR expandida a los 3 campos
     const orConditions = expandedTerms.map(() => "(producto LIKE ? OR descripcion LIKE ? OR equivalencia LIKE ?)");
     const orParams = expandedTerms.flatMap(p => [`%${p}%`, `%${p}%`, `%${p}%`]);
 
     const relevanceParts = palabrasBase.map(p => {
         const formas = expandirFormas(p);
         const cases = formas.map(f => {
-            const term = f.replace(/[^a-z]/g, '');
+            const term = f.replace(/[^a-z0-9x]/g, '');
             return `(producto LIKE '%${term}%' OR descripcion LIKE '%${term}%' OR equivalencia LIKE '%${term}%')`;
         });
         return `(CASE WHEN ${cases.join(' OR ')} THEN 1 ELSE 0 END)`;
@@ -603,13 +611,16 @@ async function startBot() {
             if (!rawText) return;
 
             const text = normalizar(rawText);
-            const esRIFPuro = /^[vjgje]?\d+$/i.test(rawText.replace(/[^a-zA-Z0-9]/g, '')) && rawText.length >= 6;
+            
+            // CORRECCIÓN: El RIF ahora DEBE empezar por una letra para ser procesado como tal.
+            // Si son solo números, el bot ignorará este bloque y pasará a buscar productos.
+            const esRIFPuro = /^[vjgje]\d+$/i.test(rawText);
 
             await guardarMensaje(from, 'user', rawText);
             const sesion = await getSesion(from);
             if (sesion && sesion.modo === 'humano' && !isAdmin) return;
 
-            // --- 1. LÓGICA DE RIF (SÓLO ADMINS) ---
+            // --- 1. LÓGICA DE RIF (SÓLO ADMINS Y SI EMPIEZA CON LETRA) ---
             if (isAdmin && esRIFPuro) {
                 const rifLimpio = limpiarRIF(rawText);
                 const c = await buscarCliente(rifLimpio);
@@ -658,23 +669,21 @@ async function startBot() {
                 }
                 return await safeSendMessage(from, { text: menuOption });
             }
-         // ============================================================
-            // NUEVO: LÓGICA DE PAGO / ABONO (COLOCAR AQUÍ)
-            // ============================================================
+            
+            // --- LÓGICA DE PAGO / ABONO ---
             if (text === 'pago fact' || text === 'abono'  || text.includes('pago') || text.includes('al señor oscar') || text.includes('envié el pago') || text.includes('adjunto pago')) {
                 const nombreUsuario = vendedor ? vendedor.nombre : pushName;
                 const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nRecibido tu mensaje, administración validará su pago a la brevedad.\n\n${MENU_TEXT}`;
                 return await safeSendMessage(from, { text: saludoCordial });
             }
 
-                     // ============================================================
-            // NUEVO: (Factura Fiscal)
-            // ============================================================
+            // --- LÓGICA FACTURA FISCAL ---
             if (text === 'pago fact' || text === 'factura fiscal'  || text.includes('factura con iva')  ) {
                 const nombreUsuario = vendedor ? vendedor.nombre : pushName;
                 const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nLa Factura Fiscalk sera realizada de acuerdo con su solicitud el dia que tenga disponibilidad de hacer el pago.\n\n${MENU_TEXT}`;
                 return await safeSendMessage(from, { text: saludoCordial });
             }
+
             // --- 3. LÓGICA DE DESPACHOS Y TIEMPOS ---
             if (text.includes("cuando llega mi pedido") || 
                 text.includes("tiempo tardan en despachar") || 
@@ -734,8 +743,7 @@ async function startBot() {
                 return await safeSendMessage(from, { text: saludoCordial });
             }
 
-                        // --- 6. SALUDO Y MENÚ ---
-            if (text === 'Pago fact' || text === 'Abono' ) {
+            if (text === 'pago fact' || text === 'abono' ) {
                 const nombreUsuario = vendedor ? vendedor.nombre : pushName;
                 const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nrecibido tu mensaje, administracion validara su pago a la brevedad\n\n${MENU_TEXT}`;
                 return await safeSendMessage(from, { text: saludoCordial });
