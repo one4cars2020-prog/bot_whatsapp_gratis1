@@ -573,10 +573,35 @@ if (hasTiempo && hasDespacho) {
     return await safeSendMessage(from, { text: "Saludos estimado cliente, su pedido esta disponible en un lapso no mayor de 24 horas" });
 }
 
-            // --- 3. LÓGICA DE PAGO MÓVIL ---
-            if (text.includes("pago movil") || text.includes("forma de pago") || text.includes("datos")) {
-                return await safeSendMessage(from, { text: "Saludos este es Nuestro Pago Movil\n04142423348\nV12959286\nBanesco" });
-            }
+// ==========================================================================================
+// LÓGICA DE DATOS BANCARIOS (PAGO MÓVIL vs CUENTA)
+// ==========================================================================================
+
+// 1. Definición de palabras clave para Cuenta Bancaria
+const cuentaWords = ["numero de cuenta", "cuenta banesco", "cuenta bancaria", "datos de la cuenta"];
+const hasCuentaSpec = cuentaWords.some(w => text.includes(w));
+const hasCuentaGen = text.includes("cuenta") && (text.includes("numero") || text.includes("datos"));
+
+// 2. Definición de palabras clave para Pago Móvil
+const pagoWords = ["pago", "movil", "banco", "transferencia", "transferir", "datos"];
+const solicitudWords = ["envieme", "envia", "pasa", "pasame", "nuevamente", "borro", "perdi", "datos", "forma"];
+const hasPago = pagoWords.some(w => text.includes(w));
+const hasSolicitud = solicitudWords.some(w => text.includes(w));
+
+// --- PRIORIDAD 1: Si pide específicamente la CUENTA BANCARIA ---
+if (hasCuentaSpec || hasCuentaGen) {
+    return await safeSendMessage(from, { 
+        text: "Saludos este es Nuestro Numero de Cuenta\nCuenta Banesco \n01340202752021037690\nRicardo Khabbaze\n12959286" 
+    });
+}
+
+// --- PRIORIDAD 2: Si pide el PAGO MÓVIL ---
+if (text.includes("pago movil") || (hasPago && hasSolicitud)) {
+    return await safeSendMessage(from, { 
+        text: "Saludos este es Nuestro Pago Movil\n04142423348\nV12959286\nBanesco" 
+    });
+}
+// ==========================================================================================
 
             // --- 4. LÓGICA DE PRODUCTOS (Optimizado por Coincidencia Máxima) ---
             if (text !== 'menu' && !['hola', 'buen dia', 'buenos dias'].includes(text)) {
