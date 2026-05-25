@@ -665,7 +665,7 @@ async function startBot() {
                      // ============================================================
             // NUEVO: (Factura Fiscal)
             // ============================================================
-            if (text === 'pago fact' || text === 'factura fiscal'  || text.includes('factura con iva') || ) {
+            if (text === 'pago fact' || text === 'factura fiscal'  || text.includes('factura con iva')  ) {
                 const nombreUsuario = vendedor ? vendedor.nombre : pushName;
                 const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nLa Factura Fiscalk sera realizada de acuerdo con su solicitud el dia que tenga disponibilidad de hacer el pago.\n\n${MENU_TEXT}`;
                 return await safeSendMessage(from, { text: saludoCordial });
