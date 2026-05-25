@@ -188,14 +188,12 @@ async function buscarCliente(rifLimpio) {
     return r[0] || null;
 }
 
-/**
- * BÚSQUEDA DE PRODUCTOS OPTIMIZADA
- * Prioriza la cantidad de palabras coincidentes para evitar resultados irrelevantes.
- */
+// ==========================================================================================
+// BÚSQUEDA DE PRODUCTOS CON FILTRO ABSOLUTO DE MARCA/MODELO
+// ==========================================================================================
 async function buscarProductoPorTexto(texto) {
     const txtNormal = normalizar(texto);
-    
-    const stopWords = ['tienes', 'la', 'del', 'quiere', 'saber', 'cuanto', 'mide', 'venden', 'donde', 'precio', 'tienen', 'el', 'una', 'un', 'hay', 'si', 'es', 'de', 'con', 'para', 'busco', 'hola', 'buenos', 'buenas', 'dias', 'tardes', 'noches', 'como', 'estas', 'esta', 'familia', 'espero', 'encuentres', 'bien', 'queria', 'preguntarte', 'gracias', 'por', 'favor', 'ayuda', 'puedes', 'podrias', 'quisiera', 'necesito', 'saludos', 'cordial', 'muchas', 'todo', 'bienvenidos', 'bendiciones', 'exito', 'dia', 'tarde', 'noche', 'pregunta', 'consulta', 'atento', 'saludo', 'estimados', 'buen', 'bueno', 'se', 'me', 'le', 'te', 'lo', 'los', 'las', 'les', 'su', 'sus', 'mi', 'mis', 'tu', 'tus', 'nos', 'que', 'cual', 'quien', 'cuando', 'porque', 'pues', 'pero', 'mas', 'muy', 'asi', 'aun', 'entre', 'sin', 'sobre', 'tras', 'durante', 'mediante', 'excepto', 'segun', 'puede', 'puedo', 'pueden', 'podemos', 'hacer', 'hace', 'ser', 'estar', 'tener', 'tengo', 'tenemos', 'tiene', 'decir', 'dice', 'ver', 'veo', 'ven', 'vez', 'quiero', 'quiere', 'queremos', 'gustaria', 'gusta', 'necesita', 'pueda', 'unid', 'unidades', 'unidad', 'listo', 'claro', 'ok', 'vale', 'va', 'vamos', 'vaya', 'algun', 'ningun', 'tipo', 'preguntar', 'disculpa', 'permiso', 'ayudar', 'apoyo', 'info', 'informacion', 'decirme', 'dime', 'avísame', 'saber', 'sabes', 'pana', 'brother', 'bro', 'amigo', 'compa', 'ando', 'estas', 'estaba', 'vengo', 'vienes', 'viene', 'voy', 'vas', 'iba', 'llegando', 'pais'];
+    const stopWords = ['tienes', 'la', 'del', 'quiere', 'saber', 'cuanto', 'mide', 'venden', 'donde', 'precio', 'tienen', 'el', 'una', 'un', 'hay', 'si', 'es', 'de', 'con', 'para', 'busco', 'hola', 'buenos', 'buenas', 'dias', 'tardes', 'noches', 'como', 'estas', 'esta', 'familia', 'espero', 'encuentres', 'encuenters', 'bien', 'queria', 'preguntarte', 'gracias', 'por', 'favor', 'ayuda', 'puedes', 'podrias', 'quisiera', 'necesito', 'saludos', 'cordial', 'muchas', 'todo', 'bienvenidos', 'bendiciones', 'exito', 'exitos', 'dia', 'tarde', 'noche', 'pregunta', 'consulta', 'atento', 'atenta', 'saludo', 'estimados', 'estimado', 'buen', 'buena', 'bueno', 'se', 'me', 'le', 'te', 'lo', 'los', 'las', 'les', 'su', 'sus', 'mi', 'mis', 'tu', 'tus', 'nos', 'os', 'que', 'cual', 'cuales', 'quien', 'quienes', 'cuando', 'porque', 'pues', 'pero', 'mas', 'muy', 'asi', 'aun', 'entre', 'sin', 'sobre', 'tras', 'durante', 'mediante', 'excepto', 'segun', 'puede', 'puedo', 'pueden', 'podemos', 'podria', 'hacer', 'hace', 'hacen', 'ser', 'estar', 'tener', 'tengo', 'tenemos', 'tiene', 'decir', 'dice', 'dicen', 'digo', 'ver', 'veo', 'ven', 'vez', 'veces', 'quiero', 'quiere', 'quieren', 'queremos', 'gustaria', 'gusta', 'gustan', 'gusto', 'necesita', 'necesitan', 'necesitamos', 'pueda','UNID.','unid.','unidades','unidad','UNIDADES','unidades', 'puedas', 'pudiera', 'pudieras', 'listo', 'claro', 'ok', 'okey', 'vale', 'va', 'vamos', 'vaya', 'algun', 'alguna', 'algunos', 'algunas', 'ningun', 'ninguna', 'tipo', 'tipos', 'preguntar', 'disculpa', 'disculpe', 'permiso', 'ayudar', 'apoyo', 'consulta', 'consultar', 'info', 'informacion', 'decirme', 'dime', 'avísame', 'avisa', 'saber', 'sabes', 'saben', 'sabemos', 'pana', 'panas', 'brother', 'bro', 'amigo', 'amigos', 'compa', 'compadre', 'ando', 'andas', 'andan', 'andaba', 'andabas', 'andabamos', 'andaban', 'estoy', 'estas', 'esta', 'estaba', 'estabas', 'estabamos', 'estaban', 'vengo', 'vienes', 'viene', 'vienen', 'venia', 'venias', 'veniamos', 'venian', 'voy', 'vas', 'va', 'vamos', 'van', 'iba', 'ibas', 'ibamos', 'iban'];
     
     const marcasModelos = ['fiesta', 'aveo', 'corsa', 'optra', 'spark', 'matiz', 'esteeem', 'swift', 'focus', 'ecosport', 'ka', 'monza', 'esperos', 'lanos', 'nubira', 'crossfox', 'saveiro', 'toyota', 'ford', 'chevrolet', 'hyundai', 'kia', 'nissan', 'mazda', 'honda', 'vw', 'volkswagen'];
 
@@ -208,15 +206,16 @@ async function buscarProductoPorTexto(texto) {
         const f = [pal];
         if (pal.endsWith('es') && pal.length > 4) f.push(pal.slice(0, -2));
         if (pal.endsWith('s') && pal.length > 3 && !pal.endsWith('es')) f.push(pal.slice(0, -1));
-        if (!pal.endsWith('s')) { f.push(pal + 's'); if (pal.endsWith('z')) f.push(pal.slice(0, -1) + 'ces'); }
+        if (!pal.endsWith('s')) {
+            f.push(pal + 's');
+            if (pal.endsWith('z')) f.push(pal.slice(0, -1) + 'ces');
+        }
         return [...new Set(f)];
     };
 
     const stockCondition = "(cantidad_existencia + cantidad_existencia_almacen > 0)";
 
-    // ==========================================================================================
-    // FILTRO ABSOLUTO: Obliga a que la marca/modelo aparezca en la descripción
-    // ==========================================================================================
+    // Filtro absoluto de marca/modelo
     let absoluteFilter = "";
     let absoluteParams = [];
     if (criticas.length > 0) {
@@ -225,7 +224,7 @@ async function buscarProductoPorTexto(texto) {
         criticas.forEach(p => absoluteParams.push(`%${p}%`));
     }
 
-    // --- INTENTO 1: BÚSQUEDA ESTRICTA (TODAS LAS PALABRAS) ---
+    // --- INTENTO 1: BÚSQUEDA ESTRICTA (AND) ---
     let whereClause = "";
     let queryParams = [];
     palabrasBase.forEach((pal, index) => {
@@ -238,12 +237,11 @@ async function buscarProductoPorTexto(texto) {
 
     try {
         const sql = `SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ${stockCondition} AND ${whereClause} ${absoluteFilter} LIMIT 8`;
-        // Orden correcto de params: primeiro queryParams, luego absoluteParams
         const [rows] = await pool.execute(sql, [...queryParams, ...absoluteParams]);
-        if (rows.length > 0) return rows; 
+        if (rows.length > 0) return rows;
     } catch (e) { console.log("Error Intento 1:", e.message); }
 
-    // --- INTENTO 2: BÚSQUEDA POR RELEVANCIA (SÓLO SI FALLA EL ESTRICTO) ---
+    // --- INTENTO 2: BÚSQUEDA POR RELEVANCIA (SÓLO SI EL ESTRICTO FALLÓ) ---
     let minRelevance = 1;
     if (palabrasBase.length >= 3) minRelevance = 2;
 
@@ -267,10 +265,15 @@ async function buscarProductoPorTexto(texto) {
             ORDER BY ${relevanceSQL} DESC 
             LIMIT 8`;
             
-        // ORDEN CRÍTICO DE PARÁMETROS:
-        // 1. orParams (para los LIKE del WHERE)
-        // 2. absoluteParams (para el filtro de marca)
-        // 3. minRelevance (para el valor del HAVING)async function obtenerDetalleFacturas(id_cliente, id_vendedor = null) {
+        // Orden correcto de parámetros: ORParams, AbsoluteParams, minRelevance
+        const [rows] = await pool.execute(sqlRelevancia, [...orParams, ...absoluteParams, minRelevance]);
+        if (rows.length > 0) return rows;
+    } catch (e) { console.log("Error Intento 2:", e.message); }
+
+    return null;
+}
+
+async function obtenerDetalleFacturas(id_cliente, id_vendedor = null) {
     let query = `
         SELECT f.id_factura, f.nro_factura, f.total, f.abono_factura, f.fecha_reg, f.porcentaje, f.descuento, f.total_desc,
                 c.nombres, c.direccion, c.cedula, c.celular, c.telefono, c.id_cliente, c.zona, c.vendedor as nombre_vendedor
@@ -314,15 +317,10 @@ async function checkNuevasFacturas() {
                     await safeSendMessage(jidV, { text: msgV });
                 }
             }
-
             await pool.execute("UPDATE tab_facturas SET whatsapp_notificado = 'SI' WHERE id_factura = ?", [f.id_factura]);
             await sleep(1000);
         }
-    } catch (e) {
-        console.log("[NOTIFICADOR] Error:", e.message);
-    } finally {
-        notificadorEjecutando = false;
-    }
+    } catch (e) { console.log("[NOTIFICADOR] Error:", e.message); } finally { notificadorEjecutando = false; }
 }
 
 // ===== RECORDATORIOS DE FACTURAS VENCIDAS =====
@@ -350,15 +348,12 @@ async function checkFacturasVencidas() {
         const facturas = await notificador.obtenerFacturasVencidas();
         const enviados = await notificador.obtenerRecordatoriosEnviados();
         let cont = 0;
-
         for (const f of facturas) {
             const dias = f.dias_vencida;
             const nivel = obtenerNivelRecordatorio(dias);
             if (!nivel) continue;
-
             const monto = (parseFloat(f.total) - parseFloat(f.abono_factura || 0)) / (parseFloat(f.porcentaje) || 1);
             if (monto <= 0) continue;
-
             const fecha = new Date(f.fecha_reg).toISOString().split('T')[0];
             const yaEnviado = enviados[f.id_factura] && enviados[f.id_factura].includes(nivel);
             if (!yaEnviado) {
@@ -372,41 +367,33 @@ async function checkFacturasVencidas() {
                 await sleep(1000);
             }
         }
-    } catch (e) {
-        console.log("[RECORDATORIO] Error:", e.message);
-    } finally {
-        recordatorioEjecutando = false;
-    }
+    } catch (e) { console.log("[RECORDATORIO] Error:", e.message); } finally { recordatorioEjecutando = false; }
 }
 
+// ===== RECORDATORIO A VENDEDORES =====
 let vendedorEjecutando = false;
+
 async function checkVendedoresRecordatorio() {
     if (!isBotReady() || vendedorEjecutando) return;
     vendedorEjecutando = true;
     try {
         const hoy = new Date().getDay();
         if (hoy === 0 || hoy === 6) return;
-
         const ultimo = await notificador.obtenerUltimoEnvioVendedor();
         if (ultimo) {
             const diff = Math.floor((new Date() - new Date(ultimo)) / 86400000);
             if (diff < 3) return;
         }
-
         const facturas = await notificador.obtenerFacturasVencidasAll();
         const vendedoresMap = {};
-
         for (const f of facturas) {
             const dias = f.dias_vencida;
             if (dias < 30) continue;
-
             let monto = (parseFloat(f.total) - parseFloat(f.abono_factura || 0)) / (parseFloat(f.porcentaje) || 1);
             if (monto <= 0 || !f.celular_vendedor) continue;
-
             if (f.vendedor_nombre && f.vendedor_nombre.toUpperCase() === 'MANUEL FERRAZ') {
                 monto = monto / 0.80;
             }
-
             const key = f.celular_vendedor.toString().replace(/\D/g, '');
             if (!vendedoresMap[key]) {
                 vendedoresMap[key] = {
@@ -417,7 +404,6 @@ async function checkVendedoresRecordatorio() {
             }
             vendedoresMap[key].facturas.push(`🔹 *N° ${f.nro_factura}* - ${f.nombres} - $${monto.toFixed(2)} (${dias} días)`);
         }
-
         for (const key of Object.keys(vendedoresMap)) {
             const v = vendedoresMap[key];
             if (!v.jid || v.facturas.length === 0) continue;
@@ -425,13 +411,8 @@ async function checkVendedoresRecordatorio() {
             await safeSendMessage(v.jid, { text: msg });
             await sleep(1000);
         }
-
         await notificador.marcarEnvioVendedor();
-    } catch (e) {
-        console.log("[VENDEDORES] Error:", e.message);
-    } finally {
-        vendedorEjecutando = false;
-    }
+    } catch (e) { console.log("[VENDEDORES] Error:", e.message); } finally { vendedorEjecutando = false; }
 }
 
 // ===== BOT WHATSAPP =====
@@ -443,10 +424,8 @@ async function startBot() {
         } catch (e) {}
         socketBot = null;
     }
-
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
     const { version } = await fetchLatestBaileysVersion();
-
     const sock = makeWASocket({
         version,
         auth: state,
@@ -454,10 +433,8 @@ async function startBot() {
         printQRInTerminal: false,
         browser: ["ONE4CARS MASTER", "Chrome", "1.0.0"]
     });
-
     socketBot = sock;
     sock.ev.on('creds.update', saveCreds);
-
     sock.ev.on('connection.update', (u) => {
         const { connection, lastDisconnect, qr } = u;
         if (qr) qrcode.toDataURL(qr, { scale: 10 }, (_, url) => qrCodeData = url);
@@ -469,13 +446,17 @@ async function startBot() {
                 setInterval(checkFacturasVencidas, 86400000);
                 setInterval(checkVendedoresRecordatorio, 86400000);
                 setInterval(() => {
-                    if (!isBotReady() && socketBot) startBot();
+                    if (!isBotReady() && socketBot) {
+                        startBot();
+                    }
                 }, 300000);
             }
         }
         if (connection === 'close') {
             const r = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (r) setTimeout(() => startBot(), 5000);
+            if (r) {
+                setTimeout(() => startBot(), 5000);
+            }
         }
     });
 
@@ -484,10 +465,8 @@ async function startBot() {
             if (type !== 'notify') return;
             const msg = messages[0];
             if (!msg.message) return;
-
             const from = msg.key.remoteJid;
             if (from === 'status@broadcast' || from.includes('@g.us')) return;
-
             const isAdmin = ADMIN_IDS.some(id => from.includes(id));
             const vendedor = await buscarVendedor(from, msg.pushName || "Vendedor");
 
@@ -505,16 +484,14 @@ async function startBot() {
             const pushName = msg.pushName || "Usuario";
             const rawText = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").trim();
             if (!rawText) return;
-
             const text = normalizar(rawText);
             const esRIFPuro = /^[vjgje]?\d+$/i.test(rawText.replace(/[^a-zA-Z0-9]/g, '')) && rawText.length >= 6;
 
             await guardarMensaje(from, 'user', rawText);
-
             const sesion = await getSesion(from);
             if (sesion && sesion.modo === 'humano' && !isAdmin) return;
 
-            // --- 1. LÓGICA DE RIF (ADMINS) ---
+            // --- 1. LÓGICA de RIF (SÓLO ADMINS) ---
             if (isAdmin && esRIFPuro) {
                 const rifLimpio = limpiarRIF(rawText);
                 const c = await buscarCliente(rifLimpio);
@@ -523,7 +500,6 @@ async function startBot() {
                     const facturas = await obtenerDetalleFacturas(c.id_cliente);
                     let totalP = 0; 
                     let list = `⭐ *CONSULTA DE ESTADO DE CUENTA (ADMIN)*\nCliente: ${c.nombres}\nRIF: ${rifLimpio}\n\n`;
-                    
                     if (facturas.length === 0) {
                         list += `✅ Sin facturas pendientes.`;
                     } else {
@@ -541,92 +517,45 @@ async function startBot() {
                 }
             }
 
-// ==========================================================================================
-// LÓGICA DE DESPACHO FLEXIBLE (CORREGIDA PARA EVITAR FALSOS POSITIVOS)
-// ==========================================================================================
-const tiempoWords = ["cuanto", "cuando", "tiempo", "tarda", "tardan", "demora"]; // Quitamos "está"
-const despachoWords = ["despachar", "despacho", "entrega", "envio", "pedido"]; // Quitamos "llega" porque es muy común (ej: "vengo llegando")
+            // --- 2. LÓGICA DE DESPACHO (CORREGIDA) ---
+            const tiempoWords = ["cuanto", "cuando", "tiempo", "tarda", "tardan", "demora"];
+            const despachoWords = ["despachar", "despacho", "entrega", "envio", "pedido"];
+            if (tiempoWords.some(w => text.includes(w)) && despachoWords.some(w => text.includes(w))) {
+                return await safeSendMessage(from, { text: "Saludos estimado cliente, su pedido esta disponible en un lapso no mayor de 24 horas" });
+            }
 
-const hasTiempo = tiempoWords.some(w => text.includes(w));
-const hasDespacho = despachoWords.some(w => text.includes(w));
+            // --- 3. LÓGICA DE ESTADO DE CUENTA / REPORTES ---
+            const reporteWords = ["reporte", "actualizado"];
+            const estadoWords = ["estado", "cuenta"];
+            const listadoWords = ["listado", "cobrar"];
+            if ((reporteWords.every(w => text.includes(w))) || (estadoWords.every(w => text.includes(w))) || (listadoWords.every(w => text.includes(w)))) {
+                return await safeSendMessage(from, { text: "2️⃣ *Estado de cuenta:* https://www.one4cars.com/estado_de_cuenta.php/" });
+            }
 
-// Solo responderá si hay una palabra de TIEMPO y una de DESPACHO/PEDIDO
-if (hasTiempo && hasDespacho) {
-    return await safeSendMessage(from, { text: "Saludos estimado cliente, su pedido esta disponible en un lapso no mayor de 24 horas" });
-}
-// ==========================================================================================
-// LÓGICA DE ESTADO DE CUENTA / REPORTES
-// ==========================================================================================
-const reporteWords = ["reporte", "actualizado"];
-const estadoWords = ["estado", "cuenta"];
-const listadoWords = ["listado", "cobrar"];
+            // --- 4. LÓGICA DE DATOS BANCARIOS (PRIORIDAD: CUENTA > PAGO MÓVIL) ---
+            const cuentaWords = ["numero de cuenta", "cuenta banesco", "cuenta bancaria", "datos de la cuenta"];
+            const hasCuentaSpec = cuentaWords.some(w => text.includes(w));
+            const hasCuentaGen = text.includes("cuenta") && (text.includes("numero") || text.includes("datos"));
 
-const hasReporte = reporteWords.every(w => text.includes(w)); // Debe tener AMBAS: reporte Y actualizado
-const hasEstado = estadoWords.every(w => text.includes(w));   // Debe tener AMBAS: estado Y cuenta
-const hasListado = listadoWords.every(w => text.includes(w)); // Debe tener AMBAS: listado Y cobrar
+            const pagoWords = ["pago", "movil", "banco", "transferencia", "transferir", "datos"];
+            const solicitudWords = ["envieme", "envia", "pasa", "pasame", "nuevamente", "borro", "perdi", "datos", "forma"];
+            const hasPago = pagoWords.some(w => text.includes(w));
+            const hasSolicitud = solicitudWords.some(w => text.includes(w));
 
-if (hasReporte || hasEstado || hasListado) {
-    return await safeSendMessage(from, { 
-        text: "2️⃣ *Estado de cuenta:* https://www.one4cars.com/estado_de_cuenta.php/" 
-    });
-}
-// ==========================================================================================
-// ==========================================================================================
-// LÓGICA DE DATOS BANCARIOS (PAGO MÓVIL vs CUENTA)
-// ==========================================================================================
+            if (hasCuentaSpec || hasCuentaGen) {
+                return await safeSendMessage(from, { text: "Saludos este es Nuestro Numero de Cuenta\nCuenta Banesco \n01340202752021037690\nRicardo Khabbaze\n12959286" });
+            }
+            if (text.includes("pago movil") || (hasPago && hasSolicitud)) {
+                return await safeSendMessage(from, { text: "Saludos este es Nuestro Pago Movil\n04142423348\nV12959286\nBanesco" });
+            }
 
-// 1. Definición de palabras clave para Cuenta Bancaria
-const cuentaWords = ["numero de cuenta", "cuenta banesco", "cuenta bancaria", "datos de la cuenta"];
-const hasCuentaSpec = cuentaWords.some(w => text.includes(w));
-const hasCuentaGen = text.includes("cuenta") && (text.includes("numero") || text.includes("datos"));
+            // --- 5. LÓGICA DE NOTIFICACIÓN DE PAGOS/ABONOS ---
+            const frasesPago = ["pago fact", "pago de la nota", "pago de la factura", "abono a la nota", "abono nota", "abono factura", "abono de la factura", "abono"];
+            if (frasesPago.some(frase => text.includes(frase))) {
+                return await safeSendMessage(from, { text: "Recibida la informacion, el departamento de Administarcion confirmara el pago a la brevedad." });
+            }
 
-// 2. Definición de palabras clave para Pago Móvil
-const pagoWords = ["pago", "movil", "banco", "transferencia", "transferir", "datos"];
-const solicitudWords = ["envieme", "envia", "pasa", "pasame", "nuevamente", "borro", "perdi", "datos", "forma"];
-const hasPago = pagoWords.some(w => text.includes(w));
-const hasSolicitud = solicitudWords.some(w => text.includes(w));
-
-// --- PRIORIDAD 1: Si pide específicamente la CUENTA BANCARIA ---
-if (hasCuentaSpec || hasCuentaGen) {
-    return await safeSendMessage(from, { 
-        text: "Saludos este es Nuestro Numero de Cuenta\nCuenta Banesco \n01340202752021037690\nRicardo Khabbaze\n12959286" 
-    });
-}
-
-// --- PRIORIDAD 2: Si pide el PAGO MÓVIL ---
-if (text.includes("pago movil") || (hasPago && hasSolicitud)) {
-    return await safeSendMessage(from, { 
-        text: "Saludos este es Nuestro Pago Movil\n04142423348\nV12959286\nBanesco" 
-    });
-}
-// ==========================================================================================
-// ==========================================================================================
-// ==========================================================================================
-// LÓGICA DE NOTIFICACIÓN DE PAGO Y ABONOS
-// ==========================================================================================
-const frasesPago = [
-    "pago fact", 
-    "pago de la nota", 
-    "pago de la factura", 
-    "abono a la nota", 
-    "abono nota", 
-    "pago de",     
-    "verificar pago",     
-    "comprobante guia de despacho",     
-    "abono factura", 
-    "abono de la factura", 
-    "abono"
-];
-
-// Si el mensaje contiene CUALQUIERA de las frases de la lista
-if (frasesPago.some(frase => text.includes(frase))) {
-    return await safeSendMessage(from, { 
-        text: "Recibida la informacion, el departamento de Administarcion confirmara el pago a la brevedad." 
-    });
-}
-// ==========================================================================================
-// ==========================================================================================
-            // --- 4. LÓGICA DE PRODUCTOS (Optimizado por Coincidencia Máxima) ---
+            // --- 6. LÓGICA DE PRODUCTOS ---
             if (text !== 'menu' && !['hola', 'buen dia', 'buenos dias'].includes(text)) {
                 try {
                     const prods = await buscarProductoPorTexto(rawText);
@@ -638,10 +567,8 @@ if (frasesPago.some(frase => text.includes(frase))) {
                             "Hola, un placer saludarle. He encontrado estos productos que coinciden con su búsqueda: 👇"
                         ];
                         const saludoAzar = saludos[Math.floor(Math.random() * saludos.length)];
-
                         await safeSendMessage(from, { text: saludoAzar });
                         await sleep(1500);
-
                         for (const p of prods) {
                             if (!isBotReady()) break; 
                             const precioLimpio = parseFloat(p.precio_final || 0).toFixed(2);
@@ -659,7 +586,7 @@ if (frasesPago.some(frase => text.includes(frase))) {
                 } catch (e) { console.log("Error en flujo de productos:", e); }
             }
 
-            // --- 5. COMANDOS DE ADMINISTRADOR ---
+            // --- 7. COMANDOS DE ADMINISTRADOR ---
             if (isAdmin) {
                 if (text === 'dolar') {
                     await actualizarDolar();
@@ -670,7 +597,7 @@ if (frasesPago.some(frase => text.includes(frase))) {
                 }
             }
 
-            // --- 6. SALUDO CORDIAL Y MENU ---
+            // --- 8. SALUDO CORDIAL Y MENU ---
             if (text === 'menu' || text === 'hola' || text === 'buen dia' || text === 'buenos dias') {
                 const nombreUsuario = vendedor ? vendedor.nombre : pushName;
                 const saludoCordial = `¡Hola *${nombreUsuario}*! Es un gusto saludarte. 😊\n\n¿En qué podemos ayudarte hoy? Por favor, indícanos qué servicio necesitas o consulta nuestro menú a continuación:\n\n${MENU_TEXT}`;
@@ -694,7 +621,6 @@ if (frasesPago.some(frase => text.includes(frase))) {
                 return await safeSendMessage(from, { text: listado });
             }
 
-            // --- 7. FALLBACK ---
             const conversationalShorts = ['si', 'no', 'ok', 'vale', 'gracias', 'ya', 'entendido', 'está bien', 'bueno', 'dale', 'está ok', 'está bien', 'claro'];
             if (conversationalShorts.includes(text)) return; 
 
@@ -710,7 +636,6 @@ const server = http.createServer(async (req, res) => {
     const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const query = Object.fromEntries(parsedUrl.searchParams.entries());
     const header = `<nav class="navbar navbar-dark bg-dark mb-4 shadow"><div class="container"><a class="navbar-brand fw-bold" href="/">ONE4CARS ADMIN</a></div></nav>`;
-    
     const routename = parsedUrl.pathname;
 
     if (routename === '/cobranza') {
@@ -779,112 +704,19 @@ const server = http.createServer(async (req, res) => {
             if (fs.existsSync('auth_info')) {
                 fs.rmSync('auth_info', { recursive: true, force: true });
             }
-            res.end(`<!DOCTYPE html>
-            <html><head><meta charset="UTF-8"><title>Sesión borrada</title>
-            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-            <meta http-equiv="refresh" content="5;url=/">
-            </head><body class="bg-light">
-            <div class="container mt-5 text-center">
-            <div class="card shadow p-5 mx-auto" style="max-width:500px;border-radius:15px;">
-            <h3>✅ Sesión borrada</h3>
-            <p class="mt-3">La carpeta <strong>auth_info</strong> se eliminó correctamente.</p>
-            <p>El bot mostrará un nuevo código QR en <strong>5 segundos</strong>.</p>
-            <p class="text-muted small">Escanea el QR desde WhatsApp → Dispositivos vinculados → Vincular un dispositivo</p>
-            <a href="/" class="btn btn-primary mt-3">Ir al inicio</a>
-            </div></div></body></html>`);
+            res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Sesión borrada</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="5;url=/"> </head><body class="bg-light"><div class="container mt-5 text-center"><div class="card shadow p-5 mx-auto" style="max-width:500px;border-radius:15px;"><h3>✅ Sesión borrada</h3><p class="mt-3">La carpeta <strong>auth_info</strong> se eliminó correctamente.</p><p>El bot mostrará un nuevo código QR en <strong>5 segundos</strong>.</p><a href="/" class="btn btn-primary mt-3">Ir al inicio</a></div></div></body></html>`);
         } catch (e) {
             res.end("Error al borrar sesión: " + e.message);
         }
     } else if (routename === '/notificador-estado') {
         const total = await notificador.obtenerFacturasNoNotificadasCount();
-        res.end(`<!DOCTYPE html>
-        <html lang="es">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-            <title>Notificador - ONE4CARS</title>
-        </head>
-        <body class="bg-light">
-            ${header}
-            <div class="container mt-5">
-                <div class="card shadow-lg p-4 mx-auto" style="max-width: 600px; border-radius: 15px;">
-                    <h3 class="mb-3">📬 Notificador de Facturas</h3>
-                    <hr>
-                    <p>Facturas pendientes por notificar: <strong>${total}</strong></p>
-                    <p>Estado del Bot: ${isBotReady() ? '<span class="text-success">🟢 Online</span>' : '<span class="text-danger">🔴 Offline</span>'}</p>
-                    <p class="text-muted small mt-3">El sistema verifica cada 45 segundos si hay nuevas facturas sin notificar.</p>
-                    <a href="/" class="btn btn-outline-secondary mt-3">Volver</a>
-                </div>
-            </div>
-        </body></html>`);
+        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Notificador</title></head><body class="bg-light">${header}<div class="container mt-5"><div class="card shadow-lg p-4 mx-auto" style="max-width: 600px; border-radius: 15px;"><h3>📬 Notificador</h3><hr><p>Facturas pendientes: <strong>${total}</strong></p><p>Estado: ${isBotReady() ? '<span class="text-success">🟢 Online</span>' : '<span class="text-danger">🔴 Offline</span>'}</p><a href="/" class="btn btn-outline-secondary mt-3">Volver</a></div></div></body></html>`);
     } else if (routename === '/recordatorio-estado') {
         const facturas = await notificador.obtenerFacturasVencidas();
         const enviados = await notificador.obtenerRecordatoriosEnviados();
-        res.end(`<!DOCTYPE html>
-        <html lang="es">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-            <title>Recordatorios - ONE4CARS</title>
-        </head>
-        <body class="bg-light">
-            ${header}
-            <div class="container mt-5">
-                <div class="card shadow-lg p-4 mx-auto" style="max-width: 800px; border-radius: 15px;">
-                    <h3 class="mb-3">📅 Recordatorios de Facturas Vencidas</h3>
-                    <hr>
-                    <table class="table table-sm">
-                        <thead><tr><th>Factura</th><th>Cliente</th><th>Días</th><th>Nivel</th><th>Estado</th></tr></thead>
-                        <tbody>
-                        ${facturas.map(f => {
-                            const dias = f.dias_vencida;
-                            const nivel = dias >= 60 ? 60 : dias >= 50 ? 50 : dias >= 40 ? 40 : 30;
-                            const yaEnviado = enviados[f.id_factura] && enviados[f.id_factura].includes(nivel);
-                            return `<tr>
-                                <td>${f.nro_factura}</td>
-                                <td>${f.nombres}</td>
-                                <td>${dias}</td>
-                                <td>${nivel}+</td>
-                                <td>${yaEnviado ? '<span class="text-success">✅ Enviado</span>' : '<span class="text-warning">⏳ Pendiente</span>'}</td>
-                            </tr>`;
-                        }).join('')}
-                        </tbody>
-                    </table>
-                    <p class="text-muted small">Clientes: notificación única por nivel (30, 40, 50, 60 días). Vendedores: resumen cada 3 días hábiles.</p>
-                    <a href="/" class="btn btn-outline-secondary">Volver</a>
-                </div>
-            </div>
-        </body></html>`);
+        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Recordatorios</title></head><body class="bg-light">${header}<div class="container mt-5"><div class="card shadow-lg p-4 mx-auto" style="max-width: 800px; border-radius: 15px;"><h3>📅 Recordatorios</h3><hr><table class="table table-sm"><thead><tr><th>Factura</th><th>Cliente</th><th>Días</th><th>Estado</th></tr></thead><tbody>${facturas.map(f => `<tr><td>${f.nro_factura}</td><td>${f.nombres}</td><td>${f.dias_vencida}</td><td>${(enviados[f.id_factura]) ? '✅' : '⏳'}</td></tr>`).join('')}</tbody></table><a href="/" class="btn btn-outline-secondary">Volver</a></div></div></body></html>`);
     } else {
-        res.end(`<!DOCTYPE html>
-        <html lang="es">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-            <meta http-equiv="refresh" content="30">
-            <title>Admin ONE4CARS</title>
-        </head>
-        <body style="background-color: #f4f7f6;">
-            ${header}
-            <div class="container text-center">
-                <div class="card shadow-lg p-4 mx-auto" style="max-width: 500px; border-radius: 15px;">
-                    <h4 class="mb-3">Estado del Bot</h4>
-                    <div class="my-4">
-                        ${qrCodeData.startsWith('data') ? `<img src="${qrCodeData}" class="img-fluid rounded" style="max-width: 250px;">` : `<h2 class="text-success">${qrCodeData}</h2>`}
-                    </div>
-                    <p>BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}</p>
-                    <div class="d-grid gap-2">
-                        <a href="/cobranza" class="btn btn-primary">PANEL DE COBRANZA</a>
-                        <a href="/marketing-panel" class="btn btn-info text-white">PANEL DE MARKETING</a>
-                        <a href="/notificador-estado" class="btn btn-secondary text-white">NOTIFICADOR</a>
-                        <a href="/recordatorio-estado" class="btn btn-warning text-dark">RECORDATORIOS</a>
-                    </div>
-                </div>
-            </div>
-        </body></html>`);
+        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="30"><title>Admin ONE4CARS</title></head><body style="background-color: #f4f7f6;">${header}<div class="container text-center"><div class="card shadow-lg p-4 mx-auto" style="max-width: 500px; border-radius: 15px;"><h4 class="mb-3">Estado del Bot</h4><div class="my-4">${qrCodeData.startsWith('data') ? `<img src="${qrCodeData}" class="img-fluid rounded" style="max-width: 250px;">` : `<h2 class="text-success">${qrCodeData}</h2>`}</div><p>BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}</p><div class="d-grid gap-2"><a href="/cobranza" class="btn btn-primary">PANEL DE COBRANZA</a><a href="/marketing-panel" class="btn btn-info text-white">PANEL DE MARKETING</a><a href="/notificador-estado" class="btn btn-secondary text-white">NOTIFICADOR</a><a href="/recordatorio-estado" class="btn btn-warning text-dark">RECORDATORIOS</a></div></div></div></body></html>`);
     }
 });
 
