@@ -190,104 +190,17 @@ async function buscarCliente(rifLimpio) {
 
 async function buscarProductoPorTexto(texto) {
     const txtNormal = normalizar(texto);
-    const stopWords = [
-        'tienes', 'la', 'del', 'quiere', 'saber', 'cuanto', 'mide', 'venden', 'donde',
-        'precio', 'tienen', 'el', 'una', 'un', 'hay', 'si', 'es', 'de', 'con', 'para',
-        'busco', 'hola', 'buenos', 'buenas', 'dias', 'tardes', 'noches', 'como', 'estas',
-        'esta', 'familia', 'espero', 'encuentres', 'encuenters', 'bien', 'queria',
-        'preguntarte', 'gracias', 'por', 'favor', 'ayuda', 'puedes', 'podrias',
-        'quisiera', 'necesito', 'saludos', 'cordial', 'muchas', 'todo', 'bienvenidos',
-        'bendiciones', 'exito', 'exitos', 'dia', 'tarde', 'noche', 'pregunta', 'consulta',
-        'atento', 'atenta', 'saludo', 'estimados', 'estimado', 'buen', 'buena', 'bueno',
-        'se', 'me', 'le', 'te', 'lo', 'los', 'las', 'les', 'su', 'sus', 'mi', 'mis',
-        'tu', 'tus', 'nos', 'os', 'que', 'cual', 'cuales', 'quien', 'quienes',
-        'cuando', 'porque', 'pues', 'pero', 'mas', 'muy', 'asi', 'aun', 'entre', 'sin',
-        'sobre', 'tras', 'durante', 'mediante', 'excepto', 'segun', 'puede', 'puedo',
-        'pueden', 'podemos', 'podria', 'hacer', 'hace', 'hacen', 'ser', 'estar', 'tener',
-        'tengo', 'tenemos', 'tiene', 'decir', 'dice', 'dicen', 'digo', 'ver', 'veo',
-        'ven', 'vez', 'veces', 'quiero', 'quiere', 'quieren', 'queremos', 'gustaria',
-        'gusta', 'gustan', 'gusto', 'necesita', 'necesitan', 'necesitamos', 'pueda','UNID.','unid.','unidades','unidad','UNIDADES','unidades',
-        'puedas', 'pudiera', 'pudieras', 'listo', 'claro', 'ok', 'okey', 'vale', 'va',
-        'vamos', 'vaya', 'algun', 'alguna', 'algunos', 'algunas', 'ningun', 'ninguna',
-        'tipo', 'tipos', 'preguntar', 'disculpa', 'disculpe', 'permiso', 'ayudar', 'del', 'tra',
-        'apoyo', 'consulta', 'consultar', 'info', 'informacion', 'decirme', 'dime', 'como', 'esta', 'la', 'familia', 'queria', 'dime',
-        'avísame', 'avisa', 'saber', 'sabes', 'saben', 'sabemos',
-        'pana', 'panas', 'brother', 'bro', 'amigo', 'amigos', 'compa', 'compadre',
-        'ando', 'andas', 'andan', 'andaba', 'andabas', 'andabamos', 'andaban',
-        'estoy', 'estas', 'esta', 'estaba', 'estabas', 'estabamos', 'estaban',
-        'vengo', 'vienes', 'viene', 'vienen', 'venia', 'venias', 'veniamos', 'venian',
-        'voy', 'vas', 'va', 'vamos', 'van', 'iba', 'ibas', 'ibamos', 'iban'
-    ];
-
-    const palabrasBase = txtNormal.split(' ')
-        .filter(p => p.length > 2 && !stopWords.includes(p));
-
-    if (palabrasBase.length === 0) return null;
-
-    const positionalWords = ['superior', 'sup', 'inferior', 'inf', 'interno', 'int', 'externo', 'ext', 'derecha', 'der', 'delantera', 'trasera', 'izquierda', 'izq'];
-    const isOnlyPositional = palabrasBase.every(p => positionalWords.includes(p));
-    if (isOnlyPositional) return null;
-
-    const expandirFormas = (pal) => {
-        const f = [pal];
-        if (pal.endsWith('es') && pal.length > 4) f.push(pal.slice(0, -2));
-        if (pal.endsWith('s') && pal.length > 3 && !pal.endsWith('es')) f.push(pal.slice(0, -1));
-        if (!pal.endsWith('s')) {
-            f.push(pal + 's');
-            if (pal.endsWith('z')) f.push(pal.slice(0, -1) + 'ces');
-        }
-        return [...new Set(f)];
+    
+    // 1. Diccionario de Sinónimos (Crucial para que entienda "rolinera" como "rodamiento")
+    const sinonimos = {
+        'rolinera': ['rodamiento', 'rolinera'],
+        'rolineras': ['rodamiento', 'rolinera'],
+        'estopera': ['estopera', 'sello'],
+        'amortiguador': ['amortiguador', 'amort'],
+        'pastilla': ['pastilla', 'freno'],
+        'disco': ['disco', 'freno']
     };
 
-    const stockCondition = "(cantidad_existencia + cantidad_existencia_almacen > 0)";
-    
-    // --- NUEVA LÓGICA DE BÚSQUEDA AND FLEXIBLE ---
-    // Para cada palabra, creamos un grupo de (desc LIKE %p1% OR desc LIKE %p2%...)
-    // Y luego unimos todos esos grupos con AND.
-    let whereClause = "";
-    let queryParams = [];
-
-    palabrasBase.forEach((pal, index) => {
-        const formas = expandirFormas(pal);
-        const conditions = formas.map(() => "descripcion LIKE ?");
-        whereClause += `(${conditions.join(" OR ")})`;
-        if (index < palabrasBase.length - 1) whereClause += " AND ";
-        
-        formas.forEach(f => queryParams.push(`%${f}%`));
-    });
-
-    try {
-        const sql = `SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ${stockCondition} AND ${whereClause} LIMIT 8`;
-        const [rows] = await pool.execute(sql, queryParams);
-        if (rows.length > 0) return rows;
-    } catch (e) {
-        console.log("Error en búsqueda AND Flexible:", e.message);
-    }
-
-    // --- FALLBACK: Búsqueda por Relevancia (Solo si el AND Flexible no encontró nada) ---
-    const expandedTerms = [...new Set(palabrasBase.flatMap(expandirFormas))];
-    const orConditions = expandedTerms.map(() => "descripcion LIKE ?");
-    const orParams = expandedTerms.map(p => `%${p}%`);
-
-    const relevanceParts = palabrasBase.map(p => {
-        const formas = expandirFormas(p);
-        const cases = formas.map(f => `descripcion LIKE '%${f.replace(/[^a-z]/g, '')}%'`);
-        return `(CASE WHEN ${cases.join(' OR ')} THEN 1 ELSE 0 END)`;
-    });
-    const relevanceSQL = relevanceParts.join(' + ');
-    const minRelevance = palabrasBase.length >= 2 ? 2 : 1;
-
-    try {
-        const [rows] = await pool.execute(
-            `SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ${stockCondition} AND ${orConditions.join(" OR ")} HAVING (${relevanceSQL}) >= ? ORDER BY ${relevanceSQL} DESC LIMIT 8`,
-            [...orParams, minRelevance]
-        );
-        if (rows.length > 0) return rows;
-    } catch (e) {}
-
-    return null;
-}async function buscarProductoPorTexto(texto) {
-    const txtNormal = normalizar(texto);
     const stopWords = [
         'tienes', 'la', 'del', 'quiere', 'saber', 'cuanto', 'mide', 'venden', 'donde',
         'precio', 'tienen', 'el', 'una', 'un', 'hay', 'si', 'es', 'de', 'con', 'para',
@@ -327,6 +240,9 @@ async function buscarProductoPorTexto(texto) {
     if (isOnlyPositional) return null;
 
     const expandirFormas = (pal) => {
+        // Si la palabra tiene sinónimos definidos, los usamos
+        if (sinonimos[pal]) return sinonimos[pal];
+
         const f = [pal];
         if (pal.endsWith('es') && pal.length > 4) f.push(pal.slice(0, -2));
         if (pal.endsWith('s') && pal.length > 3 && !pal.endsWith('es')) f.push(pal.slice(0, -1));
@@ -339,56 +255,38 @@ async function buscarProductoPorTexto(texto) {
 
     const stockCondition = "(cantidad_existencia + cantidad_existencia_almacen > 0)";
     
-    // --- INTENTO 1: BÚSQUEDA ESTRICTA (Todo debe coincidir) ---
-    let whereClause = "";
+    // --- LÓGICA DE PUNTUACIÓN (SCORING) ---
+    // Creamos una suma de CASE WHEN. Cada palabra que coincida suma 1 punto.
+    let scoreSQL = "0";
     let queryParams = [];
 
-    palabrasBase.forEach((pal, index) => {
+    palabrasBase.forEach(pal => {
         const formas = expandirFormas(pal);
-        const conditions = formas.map(() => "descripcion LIKE ?");
-        whereClause += `(${conditions.join(" OR ")})`;
-        if (index < palabrasBase.length - 1) whereClause += " AND ";
+        const conditions = formas.map(() => "descripcion LIKE ?").join(" OR ");
+        scoreSQL += ` + (CASE WHEN ${conditions} THEN 1 ELSE 0 END)`;
         formas.forEach(f => queryParams.push(`%${f}%`));
     });
 
     try {
-        const sql = `SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ${stockCondition} AND ${whereClause} LIMIT 8`;
-        const [rows] = await pool.execute(sql, queryParams);
-        if (rows.length > 0) return rows; 
-    } catch (e) {
-        console.log("Error Intento 1:", e.message);
-    }
-
-    // --- INTENTO 2: BÚSQUEDA POR RELEVANCIA DINÁMICA ---
-    // Calculamos cuántas palabras MÍNIMO deben coincidir para no enviar basura.
-    let minRelevance = 1;
-    if (palabrasBase.length >= 3) minRelevance = 2; // Si pide 3 palabras, debe coincidir al menos 2.
-    if (palabrasBase.length >= 5) minRelevance = 3; // Si pide 5 palabras, debe coincidir al menos 3.
-
-    const expandedTerms = [...new Set(palabrasBase.flatMap(expandirFormas))];
-    const orConditions = expandedTerms.map(() => "descripcion LIKE ?");
-    const orParams = expandedTerms.map(p => `%${p}%`);
-
-    const relevanceParts = palabrasBase.map(p => {
-        const formas = expandirFormas(p);
-        const cases = formas.map(f => `descripcion LIKE '%${f.replace(/[^a-z]/g, '')}%'`);
-        return `(CASE WHEN ${cases.join(' OR ')} THEN 1 ELSE 0 END)`;
-    });
-    const relevanceSQL = relevanceParts.join(' + ');
-
-    try {
-        const sqlRelevancia = `
-            SELECT producto, descripcion, tipo, precio_final 
+        // Seleccionamos el producto y calculamos su score.
+        // Ordenamos por score DESC para que el que coincida con MÁS palabras salga primero.
+        const sql = `
+            SELECT producto, descripcion, tipo, precio_final, (${scoreSQL}) as relevancia 
             FROM tab_productos 
-            WHERE ${stockCondition} AND ${orConditions.join(" OR ")} 
-            HAVING (${relevanceSQL}) >= ? 
-            ORDER BY ${relevanceSQL} DESC 
+            WHERE ${stockCondition} 
+            HAVING relevancia > 0 
+            ORDER BY relevancia DESC, descripcion ASC 
             LIMIT 8`;
             
-        const [rows] = await pool.execute(sqlRelevancia, [...orParams, minRelevance]);
-        if (rows.length > 0) return rows;
+        const [rows] = await pool.execute(sql, queryParams);
+        
+        if (rows.length > 0) {
+            // Si el mejor resultado tiene un score muy bajo comparado con las palabras buscadas, 
+            // podrías filtrar, pero aquí devolvemos los mejores matches.
+            return rows;
+        }
     } catch (e) {
-        console.log("Error Intento 2:", e.message);
+        console.log("Error en búsqueda por Scoring:", e.message);
     }
 
     return null;
