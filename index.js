@@ -697,7 +697,7 @@ async function startBot() {
                 return await safeSendMessage(from, { text: "Saludos estimado cliente, su pedido esta disponible en un lapso no mayor de 24 horas" });
             }
 
-            // --- 4. LÓGICA DE PRODUCTOS ---
+// --- 4. LÓGICA DE PRODUCTOS (CORREGIDA) ---
             if (text !== 'menu' && !['hola', 'buen dia', 'buenos dias'].includes(text)) {
                 try {
                     let prods = await buscarProductoPorCodigo(rawText);
@@ -707,23 +707,19 @@ async function startBot() {
                     }
 
                     if (prods) {
-                        // FILTRAMOS STOCK PARA SABER SI LO MOSTRAMOS O AVISAMOS QUE ESTÁ AGOTADO
+                        // Primero, verificamos si hay algo con stock
                         const conStock = prods.filter(p => parseFloat(p.stock) > 0);
+                        const agotados = prods.filter(p => parseFloat(p.stock) <= 0);
 
-                        if (conStock.length === 0) {
-                            return await safeSendMessage(from, { text: `📦 El código o producto *${rawText}* existe en nuestro sistema, pero actualmente se encuentra *AGOTADO* (Sin stock). 😔` });
-                        }
-
+                        // Mensaje de saludo
                         const saludos = [
-                            "Saludos estimado, gracias por tu consulta. Puedo recomendarte estos artículos: 👇",
-                            "¡Hola! He buscado en nuestro inventario y creo que estos artículos es lo que buscas: 👇",
-                            "Con gusto le ayudo. Según lo que me dices, aquí tienes la mejor opción disponible: 👇",
-                            "Hola, un placer saludarle. He encontrado estos productos que coinciden con su búsqueda: 👇"
+                            "Saludos estimado, gracias por tu consulta. Esto es lo que encontré: 👇",
+                            "¡Hola! He buscado en nuestro inventario y aquí tienes la información: 👇"
                         ];
-                        const saludoAzar = saludos[Math.floor(Math.random() * saludos.length)];
-                        await safeSendMessage(from, { text: saludoAzar });
-                        await sleep(1500);
+                        await safeSendMessage(from, { text: saludos[Math.floor(Math.random() * saludos.length)] });
+                        await sleep(1000);
 
+                        // 1. Procesar productos con stock
                         for (const p of conStock) {
                             if (!isBotReady()) break; 
                             const precioLimpio = parseFloat(p.precio_final || 0).toFixed(2);
@@ -733,6 +729,21 @@ async function startBot() {
                                 await socketBot.sendMessage(from, { image: { url: imgUrl }, caption: caption });
                             } catch (imgErr) {
                                 await safeSendMessage(from, { text: caption });
+                            }
+                            await sleep(1500);
+                        }
+
+                        // 2. Procesar productos agotados (Avisando que no hay stock pero mostrando los detalles)
+                        for (const p of agotados) {
+                            if (!isBotReady()) break;
+                            const precioLimpio = parseFloat(p.precio_final || 0).toFixed(2);
+                            const msgAgotado = `⚠️ *AVISO: PRODUCTO AGOTADO*\n\n📦 *CÓDIGO: ${p.producto}*\n💰 *Precio: $${precioLimpio}*\n📝 ${p.descripcion}\n🔗 Ficha: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}\n\n_Este producto actualmente no tiene disponibilidad en almacén._`;
+                            
+                            const imgUrl = `https://one4cars.com/imagen/${p.producto}.jpg`;
+                            try {
+                                await socketBot.sendMessage(from, { image: { url: imgUrl }, caption: msgAgotado });
+                            } catch (imgErr) {
+                                await safeSendMessage(from, { text: msgAgotado });
                             }
                             await sleep(1500);
                         }
