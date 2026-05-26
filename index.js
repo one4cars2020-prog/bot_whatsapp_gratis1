@@ -598,7 +598,7 @@ async function startBot() {
             if (!rawText) return;
 
             const text = normalizar(rawText);
-            const esRIFPuro = /^[vjgje]?\d+$/i.test(rawText.replace(/[^a-zA-Z0-9]/g, '')) && rawText.length >= 6;
+            const esRIFPuro = /^[vjgje]?\d+$/i.test(rawText.replace(/[^a-zA-Z0-9]/g, '')) && rawText.length = 9;
 
             await guardarMensaje(from, 'user', rawText);
             const sesion = await getSesion(from);
