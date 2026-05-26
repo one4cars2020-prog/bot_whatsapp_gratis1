@@ -598,7 +598,7 @@ async function startBot() {
             if (!rawText) return;
 
             const text = normalizar(rawText);
-            const esRIFPuro = /^[vjgje]?\d+$/i.test(rawText.replace(/[^a-zA-Z0-9]/g, '')) && rawText.length = 9;
+            const esRIFPuro = /^[vjgje]?\d+$/i.test(rawText.replace(/[^a-zA-Z0-9]/g, '')) && rawText.length >= 6;
 
             await guardarMensaje(from, 'user', rawText);
             const sesion = await getSesion(from);
@@ -839,4 +839,3 @@ server.listen(PORT, '0.0.0.0', async () => {
     actualizarDolar();
     setInterval(actualizarDolar, 3600000);
 });
-
