@@ -674,14 +674,14 @@ async function startBot() {
             
             // --- NUEVO: LÓGICA DE PAGO / ABONO ---
             if (text === 'pago fact' || text === 'abono'  || text.includes('pago') || text.includes('al señor oscar') || text.includes('envié el pago') || text.includes('adjunto pago')) {
-                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
+                const nombreUsuario = seller ? seller.nombre : pushName;
                 const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nRecibido tu mensaje, administración validará su pago a la brevedad.\n\n${MENU_TEXT}`;
                 return await safeSendMessage(from, { text: saludoCordial });
             }
 
             // --- NUEVO: Factura Fiscal ---
             if (text === 'pago fact' || text === 'factura fiscal'  || text.includes('factura con iva')  ) {
-                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
+                const nombreUsuario = seller ? seller.nombre : pushName;
                 const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nLa Factura Fiscal sera realizada de acuerdo con su solicitud el dia que tenga disponibilidad de hacer el pago.\n\n${MENU_TEXT}`;
                 return await safeSendMessage(from, { text: saludoCordial });
             }
@@ -699,36 +699,46 @@ async function startBot() {
             let codigoABuscar = "";
             const palabras = rawText.split(/\s+/);
             
-            // Buscamos un código real: Debe tener letras Y números (ej: MF283) o ser una cadena larga de números puros (ej: 513113)
+            // Buscamos un código real o medida (ej: MF283, 513113, o dimensiones con 'x' como 39x74)
             const posibleCodigo = palabras.find(p => {
                 const limpia = p.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?!]/g, "");
                 const tieneLetras = /[a-zA-Z]/.test(limpia);
                 const tieneNumeros = /[0-9]/.test(limpia);
-                return (tieneLetras && tieneNumeros && limpia.length >= 3) || (/^[0-9]{4,}$/.test(limpia));
+                const esMedida = /\d+x\d+/.test(limpia); // Detecta formatos como 39x74 o 39x72x37
+                return (tieneLetras && tieneNumeros && limpia.length >= 3) || (/^[0-9]{4,}$/.test(limpia)) || esMedida;
             });
             
             if (posibleCodigo) {
                 codigoABuscar = posibleCodigo.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?!]/g, "");
             }
 
-            // FILTRO INTELIGENTE CONVERSACIONAL (Para no interrumpir chats aleatorios ni dar fallbacks falsos)
+            // FILTRO INTELIGENTE CONVERSACIONAL ACTUALIZADO
             let esConversacionalAleatorio = false;
+            
+            // Palabras clave de repuestos del inventario para asegurar que el bot SÍ responda búsquedas de texto corto de Admins
+            const palabrasClaveInventario = [
+                'yaris', 'fiesta', 'rolinera', 'tapa', 'tapas', 'filtro', 'filtros', 'radiador', 'motor', 
+                'envase', 'deposito', 'refrigerante', 'ka', 'ecosport', 'optra', 'empacadura', 'valvula', 'cerato'
+            ];
+            
+            const contienePalabraInventario = palabrasClaveInventario.some(p => text.includes(p));
+
             if (codigoABuscar === "") {
                 const comandosValidos = ['dolar', 'bcv', 'paralelo', 'menu', 'hola', 'buen dia', 'buenos dias', 'buenas tardes', 'pago fact', 'abono'];
                 const coincideComando = comandosValidos.includes(text);
                 
                 if (isAdmin) {
-                    // Si es administrador conversando casualmente y no es un comando ni un código, el bot se queda en silencio absoluto
-                    if (!coincideComando) {
+                    // Si el admin habla de algo casual que no contiene comandos, ni códigos, NI palabras de repuestos, se guarda silencio.
+                    if (!coincideComando && !contienePalabraInventario) {
                         esConversacionalAleatorio = true;
                     }
                 } else {
-                    // Para usuarios comunes, si el texto es largo y no contiene palabras clave de intención directa de búsqueda
+                    // Para usuarios comunes, si el texto es largo y no busca nada directamente
                     const palabrasFiltro = palabras.filter(p => p.length > 1);
                     const tieneIntencionBusqueda = text.includes('tienes') || text.includes('hay') || text.includes('busco') || 
                                                    text.includes('precio') || text.includes('venden') || text.includes('disponibilidad') || 
                                                    text.includes('buscar') || text.includes('necesito') || text.includes('cotizar') ||
-                                                   text.includes('filtro') || text.includes('tapa') || text.includes('repuesto') || text.includes('producto');
+                                                   text.includes('repuesto') || text.includes('producto') || contienePalabraInventario;
                     
                     if (!coincideComando && !tieneIntencionBusqueda && palabrasFiltro.length > 6) {
                         esConversacionalAleatorio = true;
@@ -736,22 +746,21 @@ async function startBot() {
                 }
             }
 
-            // Si es una conversación casual detectada, salimos sin responder nada y el bot no se entromete
+            // Si es una conversación casual real sin intención de inventario, salimos en silencio
             if (esConversacionalAleatorio) {
                 return;
             }
 
-            if (codigoABuscar !== "" || (text !== 'menu' && !['hola', 'buen dia', 'buenos dias', 'buenas tardes'].includes(text))) {
+            if (codigoABuscar !== "" || contienePalabraInventario || (text !== 'menu' && !['hola', 'buen dia', 'buenos dias', 'buenas tardes'].includes(text))) {
                 try {
                     let prods = null;
                     
-                    // Si encontramos algo que cumple como código, lo buscamos primero
+                    // Si encontramos algo que cumple como código o medida, lo buscamos primero
                     if (codigoABuscar !== "") {
                         prods = await buscarProductoPorCodigo(codigoABuscar);
                     }
                     
-                    // Si no se encontró por código o no había código en absoluto,
-                    // buscamos por descripción pero usando el TEXTO COMPLETO ORIGINAL (rawText)
+                    // Si no se encontró por código o no había código en absoluto, buscamos por descripción usando todo el texto original
                     if (!prods || prods.length === 0) {
                         prods = await buscarProductoPorTexto(rawText);
                     }
@@ -788,7 +797,7 @@ async function startBot() {
                             }
                             await sleep(1500);
                         }
-                        return; // Salimos exitosamente tras mostrar productos
+                        return; // Búsqueda completada de forma exitosa
                     }
                 } catch (e) { console.log("Error en flujo de productos:", e); }
             }
