@@ -163,8 +163,9 @@ async function setModo(tel, modo) {
 
 async function buscarVendedor(jid, pushName) {
     const telLimpio = jid.split('@')[0]; 
+    // SOLUCIÓN DEFINITIVA DE COLACIÓN: CONVERT(columna USING utf8mb4) evita errores de sintaxis
     const [r] = await pool.execute(
-        "SELECT * FROM tab_vendedores WHERE celular_vendedor LIKE (? COLLATE utf8_spanish_ci) OR telefono_vendedor LIKE (? COLLATE utf8_spanish_ci) OR nombre LIKE (? COLLATE utf8_spanish_ci) LIMIT 1", 
+        "SELECT * FROM tab_vendedores WHERE CONVERT(celular_vendedor USING utf8mb4) LIKE ? OR CONVERT(telefono_vendedor USING utf8mb4) LIKE ? OR CONVERT(nombre USING utf8mb4) LIKE ? LIMIT 1", 
         [`%${telLimpio}%`, `%${telLimpio}%`, `%${pushName}%`]
     );
     return r[0] || null;
@@ -237,7 +238,7 @@ async function guardarUsuario(jid, usuario, id_int) {
 async function buscarCliente(rifLimpio) {
     const soloNum = soloNumerosRIF(rifLimpio);
     const [r] = await pool.execute(
-        "SELECT id_cliente, nombres, cellular, cedula, direccion, zona FROM tab_clientes WHERE clave = (? COLLATE utf8_spanish_ci) OR clave = (? COLLATE utf8_spanish_ci) OR clave LIKE (? COLLATE utf8_spanish_ci) LIMIT 1", 
+        "SELECT id_cliente, nombres, cellular, cedula, direccion, zona FROM tab_clientes WHERE CONVERT(clave USING utf8mb4) = ? OR CONVERT(clave USING utf8mb4) = ? OR CONVERT(clave USING utf8mb4) LIKE ? LIMIT 1", 
         [rifLimpio, soloNum, `%${rifLimpio}%`]
     );
     return r[0] || null;
@@ -247,11 +248,10 @@ async function buscarProductoPorCodigo(codigo) {
     const codLimpio = codigo.trim();
     const stockCondition = "(cantidad_existencia + cantidad_existencia_almacen > 0)";
     try {
-        // CORRECCIÓN DE COLACIÓN: Forzamos la interpretación del parámetro como utf8_spanish_ci
         const sql = `SELECT producto, descripcion, tipo, precio_final 
                      FROM tab_productos 
-                     WHERE producto LIKE (? COLLATE utf8_spanish_ci) AND ${stockCondition} 
-                     ORDER BY CASE WHEN producto = (? COLLATE utf8_spanish_ci) THEN 0 ELSE 1 END, producto ASC 
+                     WHERE CONVERT(producto USING utf8mb4) LIKE ? AND ${stockCondition} 
+                     ORDER BY CASE WHEN CONVERT(producto USING utf8mb4) = ? THEN 0 ELSE 1 END, producto ASC 
                      LIMIT 8`;
         const [rows] = await pool.execute(sql, [`%${codLimpio}%`, codLimpio]);
         if (rows.length > 0) return rows;
@@ -320,10 +320,9 @@ async function buscarProductoPorTexto(texto) {
     let whereClause = "";
     let queryParams = [];
 
-    // CORRECCIÓN DE COLACIÓN: Forzamos el uso de utf8_spanish_ci en la comparación LIKE
     palabrasBase.forEach((pal, index) => {
         const formas = expandirFormas(pal);
-        const conditions = formas.map(() => "descripcion LIKE (? COLLATE utf8_spanish_ci)");
+        const conditions = formas.map(() => "CONVERT(descripcion USING utf8mb4) LIKE ?");
         whereClause += `(${conditions.join(" OR ")})`;
         if (index < palabrasBase.length - 1) whereClause += " AND ";
         formas.forEach(f => queryParams.push(`%${f}%`));
@@ -340,12 +339,12 @@ async function buscarProductoPorTexto(texto) {
     let minRelevance = palabrasBase.length;
 
     const expandedTerms = [...new Set(palabrasBase.flatMap(expandirFormas))];
-    const orConditions = expandedTerms.map(() => "descripcion LIKE (? COLLATE utf8_spanish_ci)");
+    const orConditions = expandedTerms.map(() => "CONVERT(descripcion USING utf8mb4) LIKE ?");
     const orParams = expandedTerms.map(p => `%${p}%`);
 
     const relevanceParts = palabrasBase.map(p => {
         const formas = expandirFormas(p);
-        const cases = formas.map(f => `descripcion LIKE '%${f.replace(/[^a-z]/g, '')}%' COLLATE utf8_spanish_ci`);
+        const cases = formas.map(f => `CONVERT(descripcion USING utf8mb4) LIKE '%${f.replace(/[^a-z]/g, '')}%'`);
         return `(CASE WHEN ${cases.join(' OR ')} THEN 1 ELSE 0 END)`;
     });
     const relevanceSQL = relevanceParts.join(' + ');
@@ -421,7 +420,7 @@ async function checkNuevasFacturas() {
         }
     } catch (e) {
         console.log("[NOTIFICADOR] Error:", e.message);
-    } finally { // CORREGIDO: fillly cambiado a finally
+    } finally {
         notificadorEjecutando = false;
     }
 }
@@ -479,7 +478,7 @@ async function checkFacturasVencidas() {
         }
     } catch (e) {
         console.log("[RECORDATORIO] Error:", e.message);
-    } finally { // CORREGIDO: fillly cambiado a finally
+    } finally {
         recordatorioEjecutando = false;
     }
 }
@@ -537,7 +536,7 @@ async function checkVendedoresRecordatorio() {
         console.log(`[VENDEDORES] ${Object.keys(vendedoresMap).length} vendedor(es) notificado(s).`);
     } catch (e) {
         console.log("[VENDEDORES] Error:", e.message);
-    } finally { // CORREGIDO: fillly cambiado a finally
+    } finally {
         vendedorEjecutando = false;
     }
 }
@@ -623,7 +622,7 @@ async function startBot() {
             const sesion = await getSesion(from);
             if (sesion && sesion.modo === 'humano' && !isAdmin) return;
 
-            // --- 1. LÓGICA DE RIF (ADMINISTRADORES O AVISO DE RESTRICCIÓN) ---
+            // --- 1. LÓGICA DE RIF (RESTRICCIÓN PERFECTA: SOLO ADMINISTRADORES) ---
             if (esRIFPuro) {
                 if (isAdmin) {
                     const rifLimpio = limpiarRIF(rawText);
@@ -649,6 +648,7 @@ async function startBot() {
                         return await safeSendMessage(from, { text: "❌ No se encontró ningún cliente con ese RIF." });
                     }
                 } else {
+                    // Para los demás usuarios NO se realiza la búsqueda ni se genera datos financieros
                     return await safeSendMessage(from, { text: "❌ La consulta de estado de cuenta mediante RIF es una función exclusiva para administradores." });
                 }
             }
@@ -754,7 +754,7 @@ async function startBot() {
 
             // --- 6. SALUDO Y MENÚ ---
             if (text === 'menu' || text === 'hola' || text === 'buen dia' || text === 'buenos dias') {
-                const nombreUsuario = vendedor ? vendedor.nombre : pushName; // CORREGIDO: seller cambiado a vendedor
+                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
                 const saludoCordial = `¡Hola *${nombreUsuario}*! Es un gusto saludarte. 😊\n\n¿En qué podemos ayudarte hoy? Por favor, indícanos qué servicio necesitas o consulta nuestro menú a continuación:\n\n${MENU_TEXT}`;
                 return await safeSendMessage(from, { text: saludoCordial });
             }
@@ -788,7 +788,7 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
         res.end(await marketingModulo.generarHTMLMarketing(c, v, z, header, query));
     } else if (routename === '/marketing-preview') {
-        let sql = "SELECT id_cliente, nombres, cellular FROM tab_clientes WHERE celular IS NOT NULL AND celular != ''";
+        let sql = "SELECT id_cliente, nombres, cellular FROM tab_clientes WHERE celular IS NOT NULL AND cellular != ''";
         const params = [];
         if (query.vendedor) { sql += " AND vendedor = ?"; params.push(query.vendedor); }
         if (query.zona) { sql += " AND zona = ?"; params.push(query.zona); }
