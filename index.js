@@ -7,7 +7,9 @@ const fs = require('fs');
 const mysql = require('mysql2/promise');
 const axios = require('axios');
 
+// ==========================================
 // CAPTURA GLOBAL DE ERRORES
+// ==========================================
 process.on('unhandledRejection', (err) => {
     const msg = err?.message || err;
     console.log("[UNHANDLED] Error no capturado:", msg);
@@ -19,12 +21,16 @@ process.on('uncaughtException', (err) => {
     console.log("[UNCAUGHT] Error crítico:", err?.message || err);
 });
 
+// ==========================================
 // MODULOS EXTERNOS
+// ==========================================
 const cobranza = require('./cobranza');
 const marketingModulo = require('./marketing');
 const notificador = require('./notificador_local');
 
-// CONFIGURACION
+// ==========================================
+// CONFIGURACION Y CONSTANTES
+// ==========================================
 const PORT = process.env.PORT || 10000;
 const ADMIN_IDS = ["228621243408492", "97899534934200", "584142531553", "250370957778958", "244362214650069", "60305753296939", "1924162162820", "39058600415402", "58381658247238"];   
 
@@ -59,7 +65,9 @@ let socketBot = null;
 let dolarInfo = { bcv: 'Cargando...', paralelo: 'Cargando...' };
 let notificadorInterval = null;
 
-// ===== FUNCIONES DE APOYO =====
+// ==========================================
+// FUNCIONES DE APOYO Y UTILIDADES
+// ==========================================
 
 function normalizar(texto) {
     if (!texto) return "";
@@ -109,7 +117,9 @@ const randomDelay = async () => {
     await sleep(ms);
 };
 
-// ===== BASE DE DATOS =====
+// ==========================================
+// PERSISTENCIA Y CONSULTAS DB
+// ==========================================
 
 async function initDB() {
     try {
@@ -200,9 +210,20 @@ async function obtenerDetalleFacturas(id_cliente, id_vendedor = null) {
     return facturas;
 }
 
-// ===== ALGORITMO DE BÚSQUEDA DE PRODUCTOS =====
+// ==========================================
+// ALGORITMO DE BÚSQUEDA DE PRODUCTOS (INFALIBLE)
+// ==========================================
 
 async function buscarProductoPorTexto(texto) {
+    const rawText = texto.trim().toUpperCase();
+    
+    // PRIMERO: Intento de búsqueda por código exacto (Prioridad Máxima)
+    const [exactCode] = await pool.execute(
+        "SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE producto = ? AND (cantidad_existencia + cantidad_existencia_almacen > 0) LIMIT 1",
+        [rawText]
+    );
+    if (exactCode.length > 0) return exactCode;
+
     const txtNormal = normalizar(texto);
     const stopWords = [
         'tienes', 'la', 'del', 'quiere', 'saber', 'cuanto', 'mide', 'venden', 'donde', 'precio', 'tienen', 'el', 'una', 'un', 'hay', 'si', 'es', 'de', 'con', 'para', 'busco', 'hola', 'buenos', 'buenas', 'dias', 'tardes', 'noches', 'como', 'estas', 'esta', 'familia', 'espero', 'encuentres', 'bien', 'queria', 'preguntarte', 'gracias', 'por', 'favor', 'ayuda', 'puedes', 'podrias', 'quisiera', 'necesito', 'saludos', 'cordial', 'muchas', 'todo', 'bienvenidos', 'bendiciones', 'exito', 'dia', 'tarde', 'noche', 'pregunta', 'consulta', 'atento', 'atenta', 'saludo', 'estimados', 'estimado', 'buen', 'buena', 'bueno', 'se', 'me', 'le', 'te', 'lo', 'los', 'las', 'les', 'su', 'sus', 'mi', 'mis', 'tu', 'tus', 'nos', 'os', 'que', 'cual', 'cuales', 'quien', 'quienes', 'cuando', 'porque', 'pues', 'pero', 'mas', 'muy', 'asi', 'aun', 'entre', 'sin', 'sobre', 'tras', 'durante', 'mediante', 'excepto', 'segun', 'puede', 'puedo', 'pueden', 'podemos', 'podria', 'hacer', 'hace', 'hacen', 'ser', 'estar', 'tener', 'tengo', 'tenemos', 'tiene', 'decir', 'dice', 'dicen', 'digo', 'ver', 'veo', 'ven', 'vez', 'veces', 'quiero', 'quiere', 'quieren', 'queremos', 'gustaria', 'gusta', 'gustan', 'gusto', 'necesita', 'necesitan', 'necesitamos', 'pueda', 'unid', 'unidades', 'unidad', 'puedas', 'pudiera', 'pudieras', 'listo', 'claro', 'ok', 'okey', 'vale', 'va', 'vamos', 'vaya', 'algun', 'alguna', 'algunos', 'algunas', 'ningun', 'ninguna', 'tipo', 'tipos', 'preguntar', 'disculpa', 'disculpe', 'permiso', 'ayudar', 'apoyo', 'info', 'informacion', 'decirme', 'dime', 'avisame', 'avisa', 'sabes', 'saben', 'sabemos', 'pana', 'panas', 'brother', 'bro', 'amigo', 'amigos', 'compa', 'compadre', 'ando', 'andas', 'andan', 'estoy', 'vengo', 'vienes', 'viene', 'voy', 'vas', 'va', 'llegando', 'pais', 'país'
@@ -230,7 +251,7 @@ async function buscarProductoPorTexto(texto) {
 
     const stockCondition = "(cantidad_existencia + cantidad_existencia_almacen > 0)";
     
-    // INTENTO 1: Búsqueda Estricta AND
+    // INTENTO 1: Búsqueda Estricta (Todas las palabras deben estar)
     let whereClause = "";
     let queryParams = [];
     palabrasBase.forEach((pal, index) => {
@@ -247,11 +268,7 @@ async function buscarProductoPorTexto(texto) {
         if (rows.length > 0) return rows;
     } catch (e) {}
 
-    // INTENTO 2: Relevancia Dinámica
-    let minRelevance = 1;
-    if (palabrasBase.length >= 3) minRelevance = 2; 
-    if (palabrasBase.length >= 5) minRelevance = 3;
-
+    // INTENTO 2: Relevancia Dinámica (Filtrado por el máximo nivel de coincidencia)
     const expandedTerms = [...new Set(palabrasBase.flatMap(expandirFormas))];
     const orConditions = expandedTerms.map(() => "descripcion LIKE ?");
     const orParams = expandedTerms.map(p => `%${p}%`);
@@ -264,22 +281,29 @@ async function buscarProductoPorTexto(texto) {
     const relevanceSQL = relevanceParts.join(' + ');
 
     try {
+        // Obtenemos los productos con su score
         const sqlRelevancia = `
-            SELECT producto, descripcion, tipo, precio_final 
+            SELECT producto, descripcion, tipo, precio_final, (${relevanceSQL}) as score
             FROM tab_productos 
             WHERE ${stockCondition} AND (${orConditions.join(" OR ")}) 
-            HAVING (${relevanceSQL}) >= ? 
-            ORDER BY ${relevanceSQL} DESC 
-            LIMIT 8`;
+            ORDER BY score DESC 
+            LIMIT 20`;
             
-        const [rows] = await pool.execute(sqlRelevancia, [...orParams, minRelevance]);
-        if (rows.length > 0) return rows;
+        const [rows] = await pool.execute(sqlRelevancia, orParams);
+        if (rows.length > 0) {
+            // FILTRADO CRÍTICO: Solo devolvemos los que tengan el score máximo encontrado
+            const maxScore = rows[0].score;
+            const mejoresResultados = rows.filter(r => r.score === maxScore);
+            return mejoresResultados.slice(0, 8);
+        }
     } catch (e) {}
 
     return null;
 }
 
-// ===== AUTOMATIZACIONES =====
+// ==========================================
+// AUTOMATIZACIONES Y NOTIFICADORES
+// ==========================================
 
 async function checkNuevasFacturas() {
     if (!isBotReady()) return;
@@ -396,7 +420,9 @@ async function actualizarDolar() {
     } catch (e) {}
 }
 
-// ===== BOT WHATSAPP =====
+// ==========================================
+// CONTROLADOR DEL BOT (STARTBOT)
+// ==========================================
 
 async function startBot() {
     if (socketBot) {
@@ -469,30 +495,39 @@ async function startBot() {
 
             await guardarMensaje(from, 'user', rawText);
 
-            // 1. LÓGICA RIF (ADMINS)
-            const esRIFPuro = /^[vjgje]?\d+$/i.test(rawText.replace(/[^a-zA-Z0-9]/g, '')) && rawText.length >= 6;
-            if (isAdmin && esRIFPuro) {
-                const rifLimpio = limpiarRIF(rawText);
-                const c = await buscarCliente(rifLimpio);
-                if (c) {
-                    await guardarUsuario(from, rifLimpio, c.id_cliente);
-                    const facturas = await obtenerDetalleFacturas(c.id_cliente);
-                    let totalP = 0; 
-                    let list = `⭐ *ESTADO DE CUENTA (ADMIN)*\nCliente: ${c.nombres}\nRIF: ${rifLimpio}\n\n`;
-                    if (facturas.length === 0) {
-                        list += `✅ Sin facturas pendientes.`;
+            // --- LÓGICA DE IDENTIFICACIÓN (RIF VS PRODUCTO) ---
+            
+            // 1. Si es Admin y parece un RIF (Empieza por letra o es muy largo)
+            const pareceRIF = /^[VJGJE]/i.test(rawText) || (rawText.length >= 8 && /^\d+$/.test(rawText));
+            
+            if (isAdmin && pareceRIF) {
+                // Antes de tratarlo como RIF, verificamos si es un código de producto exacto
+                const [esProducto] = await pool.execute("SELECT producto FROM tab_productos WHERE producto = ?", [rawText.toUpperCase()]);
+                
+                if (esProducto.length === 0) {
+                    const rifLimpio = limpiarRIF(rawText);
+                    const c = await buscarCliente(rifLimpio);
+                    if (c) {
+                        await guardarUsuario(from, rifLimpio, c.id_cliente);
+                        const facturas = await obtenerDetalleFacturas(c.id_cliente);
+                        let totalP = 0; 
+                        let list = `⭐ *ESTADO DE CUENTA (ADMIN)*\nCliente: ${c.nombres}\nRIF: ${rifLimpio}\n\n`;
+                        if (facturas.length === 0) {
+                            list += `✅ Sin facturas pendientes.`;
+                        } else {
+                            facturas.forEach(f => {
+                                const monto = (f.total - f.abono_factura) / (f.porcentaje || 1);
+                                totalP += monto;
+                                list += `🔸 *#${f.nro_factura}* | $${monto.toFixed(2)}\n`;
+                                list += `✍️ Firmada: https://www.one4cars.com/uploads/notas/${f.nro_factura}.jpg\n\n`;
+                            });
+                            list += `💰 *TOTAL A PAGAR: $${totalP.toFixed(2)}*`;
+                        }
+                        return await safeSendMessage(from, { text: list });
                     } else {
-                        facturas.forEach(f => {
-                            const monto = (f.total - f.abono_factura) / (f.porcentaje || 1);
-                            totalP += monto;
-                            list += `🔸 *#${f.nro_factura}* | $${monto.toFixed(2)}\n`;
-                            list += `✍️ Firmada: https://www.one4cars.com/uploads/notas/${f.nro_factura}.jpg\n\n`;
-                        });
-                        list += `💰 *TOTAL A PAGAR: $${totalP.toFixed(2)}*`;
+                        // Si parece RIF pero no existe, informamos (Solo si no es un código de producto)
+                        return await safeSendMessage(from, { text: "❌ No se encontró ningún cliente con ese RIF." });
                     }
-                    return await safeSendMessage(from, { text: list });
-                } else {
-                    return await safeSendMessage(from, { text: "❌ No se encontró ningún cliente con ese RIF." });
                 }
             }
 
@@ -533,7 +568,7 @@ async function startBot() {
                 return await safeSendMessage(from, { text: `¡Hola *${nombre}*! 😊\n\n${MENU_TEXT}` });
             }
 
-            // 5. BÚSQUEDA DE PRODUCTOS
+            // 5. BÚSQUEDA DE PRODUCTOS (CON FILTRADO DE RELEVANCIA MÁXIMA)
             const prods = await buscarProductoPorTexto(rawText);
             if (prods) {
                 const saludos = [
@@ -565,7 +600,9 @@ async function startBot() {
     });
 }
 
-// ===== SERVIDOR HTTP =====
+// ==========================================
+// SERVIDOR HTTP (ADMIN PANEL)
+// ==========================================
 
 const server = http.createServer(async (req, res) => {
     const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
