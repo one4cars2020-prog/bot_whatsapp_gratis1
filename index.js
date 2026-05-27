@@ -1,3 +1,5 @@
+--- START OF FILE index (25).js ---
+
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const qrcode = require('qrcode');
@@ -107,7 +109,6 @@ function normalizar(texto) {
     return texto
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "") 
-        // NO eliminamos la 'x' ni números para no romper las medidas (ej. 39x72)
         .toLowerCase()
         .trim();
 }
@@ -243,12 +244,8 @@ async function buscarCliente(rifLimpio) {
     return r[0] || null;
 }
 
-// ============================================================
-// LÓGICA DE BÚSQUEDA DE PRODUCTOS (REFORMULADA Y COMPLETA)
-// ============================================================
 async function buscarProductoPorTexto(texto) {
     const txtNormal = normalizar(texto);
-    
     const stopWords = [
         'tienes', 'la', 'del', 'quiere', 'saber', 'cuanto', 'mide', 'venden', 'donde',
         'precio', 'tienen', 'el', 'una', 'un', 'hay', 'si', 'es', 'de', 'con', 'para',
@@ -279,8 +276,6 @@ async function buscarProductoPorTexto(texto) {
         'llegando', 'pais', 'país', 'atento'
     ];
 
-    // Si el texto contiene una 'x', es probable que sea una medida. 
-    // No filtramos palabras para no romper la cadena "39x72"
     const esMedida = txtNormal.includes('x');
     let palabrasBase = [];
 
@@ -298,7 +293,6 @@ async function buscarProductoPorTexto(texto) {
     let queryParams = [];
 
     palabrasBase.forEach((pal, index) => {
-        // BUSQUEDA TRIPLE: Campo producto, Campo descripcion Y Campo equivalencia
         const condition = `(producto LIKE ? OR descripcion LIKE ? OR equivalencia LIKE ?)`;
         whereClause += condition;
         if (index < palabrasBase.length - 1) whereClause += " AND ";
@@ -306,7 +300,6 @@ async function buscarProductoPorTexto(texto) {
     });
 
     try {
-        // Buscamos coincidencias en cualquiera de los 3 campos
         const sql = `SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ${stockCondition} AND ${whereClause} LIMIT 8`;
         const [rows] = await pool.execute(sql, queryParams);
         if (rows.length > 0) return rows;
@@ -365,9 +358,6 @@ async function checkNuevasFacturas() {
             await pool.execute("UPDATE tab_facturas SET whatsapp_notificado = 'SI' WHERE id_factura = ?", [f.id_factura]);
             await sleep(1000);
         }
-        if (facturas.length > 0) {
-            console.log(`[NOTIFICADOR] ${facturas.length} factura(s) notificada(s).`);
-        }
     } catch (e) {
         console.log("[NOTIFICADOR] Error:", e.message);
     } finally {
@@ -388,9 +378,9 @@ function obtenerNivelRecordatorio(dias) {
 
 function obtenerTonoMensaje(nivel, f, monto, fecha) {
     if (nivel >= 60) {
-        return `🧾 *AVISO DE PAGO PENDIENTE*\n\nHola *${f.nombres}*, la factura *N° ${f.nro_factura}* emitida el *${fecha}* ya superó los 60 días de vencida con un saldo de *$${monto.toFixed(2)}*.\n\nEl retraso en el pago afecta la rotación de nuestros productos y la disponibilidad de inventario para todos nuestros clientes. Le agradecemos realizar el pago a la mayor brevedad posible.\n\nQuedamos a su disposición para cualquier duda o gestión. 🚗`;
+        return `🧾 *AVISO DE PAGO PENDIENTE*\n\nHola *${f.nombres}*, la factura *N° ${f.nro_factura}* emitida el *${fecha}* ya superó los 60 días de vencida con un saldo de *$${monto.toFixed(2)}*.\n\nEl retraso en el pago afecta la rotación de nuestros productos. Le agradecemos realizar el pago a la mayor brevedad posible. 🚗`;
     }
-    return `🧾 *RECORDATORIO DE PAGO*\n\nHola *${f.nombres}*, le recordamos amablemente que la factura *N° ${f.nro_factura}* con fecha *${fecha}* presenta un saldo pendiente de *$${monto.toFixed(2)}*.\n\nLe agradecemos gestionar el pago para mantener su cuenta al día. Estamos a su disposición para cualquier consulta. 🚗`;
+    return `🧾 *RECORDATORIO DE PAGO*\n\nHola *${f.nombres}*, le recordamos amablemente que la factura *N° ${f.nro_factura}* con fecha *${fecha}* presenta un saldo pendiente de *$${monto.toFixed(2)}*.\n\nLe agradecemos gestionar el pago para mantener su cuenta al día. 🚗`;
 }
 
 async function checkFacturasVencidas() {
@@ -421,10 +411,6 @@ async function checkFacturasVencidas() {
                 cont++;
                 await sleep(1000);
             }
-        }
-
-        if (cont > 0) {
-            console.log(`[RECORDATORIO] ${cont} cliente(s) notificado(s).`);
         }
     } catch (e) {
         console.log("[RECORDATORIO] Error:", e.message);
@@ -477,13 +463,12 @@ async function checkVendedoresRecordatorio() {
         for (const key of Object.keys(vendedoresMap)) {
             const v = vendedoresMap[key];
             if (!v.jid || v.facturas.length === 0) continue;
-            const msg = `📢 *RESUMEN DE CLIENTES VENCIDOS*\n\nVendedor: *${v.nombre}*\n\n${v.facturas.join('\n')}\n\nLe recordamos la importancia de gestionar estos cobros para mantener la rotación de productos.`;
+            const msg = `📢 *RESUMEN DE CLIENTES VENCIDOS*\n\nVendedor: *${v.nombre}*\n\n${v.facturas.join('\n')}\n\nLe recordamos la importancia de gestionar estos cobros.`;
             await safeSendMessage(v.jid, { text: msg });
             await sleep(1000);
         }
 
         await notificador.marcarEnvioVendedor();
-        console.log(`[VENDEDORES] ${Object.keys(vendedoresMap).length} vendedor(es) notificado(s).`);
     } catch (e) {
         console.log("[VENDEDORES] Error:", e.message);
     } finally {
@@ -565,11 +550,12 @@ async function startBot() {
 
             const text = normalizar(rawText);
             await guardarMensaje(from, 'user', rawText);
+            
             const sesion = await getSesion(from);
+            // El bot deja de responder si el modo es 'humano' y el que escribe NO es un admin.
             if (sesion && sesion.modo === 'humano' && !isAdmin) return;
 
-            // --- 1. PRIORIDAD: BUSCAR PRODUCTOS ---
-            // Buscamos productos antes que RIFs para evitar que códigos numéricos sean tomados como RIFs.
+            // --- 1. PRIORIDAD: BÚSQUEDA DE PRODUCTOS (ABIERTO A TODOS) ---
             if (!['hola', 'buen dia', 'buenos dias', 'menu'].includes(text)) {
                 try {
                     const prods = await buscarProductoPorTexto(rawText);
@@ -596,12 +582,12 @@ async function startBot() {
                             }
                             await sleep(1500);
                         }
-                        return; // Si encontró productos, termina aquí.
+                        return; 
                     }
                 } catch (e) { console.log("Error en flujo de productos:", e); }
             }
 
-            // --- 2. LÓGICA DE RIF (SÓLO SI NO ES PRODUCTO Y EL FORMATO ES CORRECTO) ---
+            // --- 2. BÚSQUEDA DE RIF (ESTRICTAMENTE SOLO ADMINS) ---
             const esRIFPuro = /^[vjgje]?\d+$/i.test(rawText.replace(/[^a-zA-Z0-9]/g, '')) && rawText.replace(/[^a-zA-Z0-9]/g, '').length >= 9;
             if (isAdmin && esRIFPuro) {
                 const rifLimpio = limpiarRIF(rawText);
@@ -624,14 +610,13 @@ async function startBot() {
                     }
                     return await safeSendMessage(from, { text: list });
                 } else {
-                    // Solo respondemos que no existe si realmente parece un RIF
                     if (rawText.length >= 9 && rawText.length <= 11) {
                         return await safeSendMessage(from, { text: "❌ No se encontró ningún cliente con ese RIF." });
                     }
                 }
             }
 
-            // --- 3. DETECCIÓN INTELIGENTE DEL MENÚ ---
+            // --- 3. DETECCIÓN DEL MENÚ (ABIERTO A TODOS) ---
             const menuOption = detectarIntencionMenu(text);
             if (menuOption) {
                 if (menuOption.includes('Estado de cuenta')) {
@@ -655,21 +640,21 @@ async function startBot() {
                 return await safeSendMessage(from, { text: menuOption });
             }
 
-            // --- 4. LÓGICA DE PAGOS / ABONOS ---
+            // --- 4. LÓGICA DE PAGOS / ABONOS (ABIERTO A TODOS) ---
             if (text === 'pago fact' || text === 'abono'  || text.includes('pago') || text.includes('al señor oscar') || text.includes('envié el pago') || text.includes('adjunto pago')) {
                 const nombreUsuario = vendedor ? vendedor.nombre : pushName;
                 const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nRecibido tu mensaje, administración validará su pago a la brevedad.\n\n${MENU_TEXT}`;
                 return await safeSendMessage(from, { text: saludoCordial });
             }
 
-            // --- 5. LÓGICA DE FACTURA FISCAL ---
+            // --- 5. LÓGICA DE FACTURA FISCAL (ABIERTO A TODOS) ---
             if (text === 'factura fiscal' || text.includes('factura con iva')) {
                 const nombreUsuario = vendedor ? vendedor.nombre : pushName;
                 const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nLa Factura Fiscal sera realizada de acuerdo con su solicitud el dia que tenga disponibilidad de hacer el pago.\n\n${MENU_TEXT}`;
                 return await safeSendMessage(from, { text: saludoCordial });
             }
 
-            // --- 6. LÓGICA DE DESPACHOS ---
+            // --- 6. LÓGICA DE DESPACHOS (ABIERTO A TODOS) ---
             if (text.includes("cuando llega mi pedido") || 
                 text.includes("tiempo tardan en despachar") || 
                 text.includes("cuando me llega") || 
@@ -678,7 +663,7 @@ async function startBot() {
                 return await safeSendMessage(from, { text: "Saludos estimado cliente, su pedido esta disponible en un lapso no mayor de 24 horas" });
             }
 
-            // --- 7. COMANDOS DE ADMINISTRADOR ---
+            // --- 7. COMANDOS DE ADMINISTRADOR (SÓLO ADMINS) ---
             if (isAdmin) {
                 if (text === 'dolar' || text === 'bcv' || text === 'paralelo' ) {
                     await actualizarDolar();
@@ -689,7 +674,7 @@ async function startBot() {
                 }
             }
 
-            // --- 8. SALUDO Y MENÚ ---
+            // --- 8. SALUDO Y MENÚ (ABIERTO A TODOS) ---
             if (text === 'menu' || text === 'hola' || text === 'buen dia' || text === 'buenos dias') {
                 const nombreUsuario = vendedor ? vendedor.nombre : pushName;
                 const saludoCordial = `¡Hola *${nombreUsuario}*! Es un gusto saludarte. 😊\n\n¿En qué podemos ayudarte hoy? Por favor, indícanos qué servicio necesitas o consulta nuestro menú a continuación:\n\n${MENU_TEXT}`;
