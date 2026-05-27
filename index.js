@@ -608,3 +608,165 @@ async function startBot() {
                 if (menuOption.includes('Estado de cuenta')) {
                     const targetID = sesion?.id_cliente_int;
                     if (!targetID) {
+                        return await safeSendMessage(from, { text: "Para consultar su estado de cuenta, por favor envíe su *RIF* para identificarlo." });
+                    }
+                    const facturas = await obtenerDetalleFacturas(targetID);
+                    if (facturas.length === 0) return await safeSendMessage(from, { text: "✅ No posee facturas pendientes." });
+                    let totalP = 0; let listado = "*📄 FACTURAS PENDIENTES:*\n\n";
+                    facturas.forEach(f => {
+                        const monto = (f.total - f.abono_factura) / (f.porcentaje || 1);
+                        totalP += monto;
+                        const fReg = new Date(f.fecha_reg).toISOString().split('T')[0];
+                        const params = `id_factura=${f.id_factura}&nro_factura=${f.nro_factura}&fecha_reg=${fReg}&total=${f.total}&abono_factura=${f.abono_factura}&nombres=${encodeURIComponent(f.nombres.trim())}&nombre=${encodeURIComponent(f.nombre_vendedor.trim())}&direccion=${encodeURIComponent(f.direccion.trim())}&cedula=${f.cedula.trim()}&celular=${encodeURIComponent(f.celular.trim())}&telefono=${encodeURIComponent(f.telefono.trim())}&id_cliente=${f.id_cliente}&zona=${encodeURIComponent(f.zona.trim())}&descuento=${f.descuento}&total_desc=${f.total_desc}`;
+                        listado += `🔸 *#${f.nro_factura}* | $${monto.toFixed(2)}\n📄 PDF: https://one4cars.com/sevencorp/factura_full_reporte_web.php?${params}\n\n`;
+                    });
+                    listado += `💰 *TOTAL A PAGAR: $${totalP.toFixed(2)}*`;
+                    return await safeSendMessage(from, { text: listado });
+                }
+                return await safeSendMessage(from, { text: menuOption });
+            }
+
+            // --- 4. LÓGICA DE PAGOS / ABONOS (ABIERTO A TODOS) ---
+            if (text === 'pago fact' || text === 'abono'  || text.includes('pago') || text.includes('al señor oscar') || text.includes('envié el pago') || text.includes('adjunto pago')) {
+                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
+                const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nRecibido tu mensaje, administración validará su pago a la brevedad.\n\n${MENU_TEXT}`;
+                return await safeSendMessage(from, { text: saludoCordial });
+            }
+
+            // --- 5. LÓGICA DE FACTURA FISCAL (ABIERTO A TODOS) ---
+            if (text === 'factura fiscal' || text.includes('factura con iva')) {
+                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
+                const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nLa Factura Fiscal sera realizada de acuerdo con su solicitud el dia que tenga disponibilidad de hacer el pago.\n\n${MENU_TEXT}`;
+                return await safeSendMessage(from, { text: saludoCordial });
+            }
+
+            // --- 6. LÓGICA DE DESPACHOS (ABIERTO A TODOS) ---
+            if (text.includes("cuando llega mi pedido") || 
+                text.includes("tiempo tardan en despachar") || 
+                text.includes("cuando me llega") || 
+                text.includes("tiempo de entrega") || 
+                text.includes("cuanto tarda el envio")) {
+                return await safeSendMessage(from, { text: "Saludos estimado cliente, su pedido esta disponible en un lapso no mayor de 24 horas" });
+            }
+
+            // --- 7. COMANDOS DE ADMINISTRADOR (SÓLO ADMINS) ---
+            if (isAdmin) {
+                if (text === 'dolar' || text === 'bcv' || text === 'paralelo' ) {
+                    await actualizarDolar();
+                    return await safeSendMessage(from, { text: `💵 BCV: ${dolarInfo.bcv}\n📈 Paralelo: ${dolarInfo.paralelo}` });
+                }
+                if (text === 'menu' || text === 'hola' || text === 'buen dia') {
+                    return await safeSendMessage(from, { text: `⭐ *MODO ADMINISTRADOR*\n\n${MENU_TEXT}` });
+                }
+            }
+
+            // --- 8. SALUDO Y MENÚ (ABIERTO A TODOS) ---
+            if (text === 'menu' || text === 'hola' || text === 'buen dia' || text === 'buenos dias') {
+                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
+                const saludoCordial = `¡Hola *${nombreUsuario}*! Es un gusto saludarte. 😊\n\n¿En qué podemos ayudarte hoy? Por favor, indícanos qué servicio necesitas o consulta nuestro menú a continuación:\n\n${MENU_TEXT}`;
+                return await safeSendMessage(from, { text: saludoCordial });
+            }
+            
+            // --- 9. FALLBACK ---
+            const conversationalShorts = ['si', 'no', 'ok', 'vale', 'gracias', 'ya', 'entendido', 'está bien', 'bueno', 'dale', 'está ok', 'claro'];
+            if (conversationalShorts.includes(text)) return; 
+            if (rawText.length > 500) return;
+
+            await safeSendMessage(from, { text: "Lo siento, no logré entender tu solicitud. 😕 ¿Podrías darme más detalles o escribir *menu* para ver nuestras opciones?" });
+        } catch (e) { console.log("[MSG] Error en handler de mensajes:", e.message); }
+    });
+}
+
+// ===== SERVIDOR HTTP =====
+const server = http.createServer(async (req, res) => {
+    const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    const query = Object.fromEntries(parsedUrl.searchParams.entries());
+    const header = `<nav class="navbar navbar-dark bg-dark mb-4 shadow"><div class="container"><a class="navbar-brand fw-bold" href="/">ONE4CARS ADMIN</a></div></nav>`;
+    const routename = parsedUrl.pathname;
+
+    if (routename === '/cobranza') {
+        const v = await cobranza.obtenerVendedores();
+        const z = await cobranza.obtenerZonas();
+        const d = await cobranza.obtenerListaDeudores(query);
+        res.end(await cobranza.generarHTML(v, z, d, header, query));
+    } else if (routename === '/marketing-panel') {
+        const v = await marketingModulo.obtenerVendedores();
+        const z = await marketingModulo.obtenerZonas();
+        const c = await marketingModulo.obtenerClientesMarketing(query);
+        res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
+        res.end(await marketingModulo.generarHTMLMarketing(c, v, z, header, query));
+    } else if (routename === '/marketing-preview') {
+        let sql = "SELECT id_cliente, nombres, celular FROM tab_clientes WHERE celular IS NOT NULL AND celular != ''";
+        const params = [];
+        if (query.vendedor) { sql += " AND vendedor = ?"; params.push(query.vendedor); }
+        if (query.zona) { sql += " AND zona = ?"; params.push(query.zona); }
+        const [clientes] = await pool.execute(sql, params);
+        res.writeHead(200, {'Content-Type': 'application/json'});
+        res.end(JSON.stringify(clientes));
+    } else if (routename === '/enviar-marketing' && req.method === 'POST') {
+        if (!isBotReady()) return res.end("Bot no listo.");
+        let b = ''; req.on('data', c => b += c);
+        req.on('end', async () => {
+            const data = JSON.parse(b);
+            for (const id of data.clientes) {
+                const [rows] = await pool.execute("SELECT * FROM tab_clientes WHERE id_cliente=?", [id]);
+                if (rows[0]) {
+                    const c = rows[0];
+                    const jid = formatWhatsApp(c.celular);
+                    try {
+                        if (data.tipo === 'precios') {
+                            await safeSendMessage(jid, { document: { url: PDF_URL_CATALOGO }, fileName: 'Catalogo-ONE4CARS.pdf', mimetype: 'application/pdf', caption: `¡Hola *${c.nombres}*! Catálogo actualizado.` });
+                        } else if (data.tipo === 'promo') {
+                            await safeSendMessage(jid, { text: data.mensaje });
+                        }
+                        await randomDelay();
+                    } catch (e) {}
+                }
+            }
+            res.end("OK");
+        });
+    } else if (routename === '/enviar-cobranza' && req.method === 'POST') {
+        if (!isBotReady()) return res.end("Bot no listo.");
+        let b = ''; req.on('data', c => b += c);
+        req.on('end', async () => {
+            const data = JSON.parse(b);
+            for (const id_cliente of data.facturas) {
+                const [facturas] = await pool.execute(
+                    "SELECT f.nro_factura, f.total, f.abono_factura, f.fecha_reg, f.porcentaje, c.nombres, c.celular FROM tab_facturas f JOIN tab_clientes c ON f.id_cliente = c.id_cliente WHERE f.id_cliente = ? AND f.pagada = 'NO' AND f.anulado = 'no'", 
+                    [id_cliente]
+                );
+                for (const f of facturas) {
+                    const jid = formatWhatsApp(f.celular);
+                    const saldoBs = (f.total - f.abono_factura) / (f.porcentaje || 1);
+                    const msg = `Hola *${f.nombres}* 🚗, factura #${f.nro_factura} pendiente.\nSaldo: Bs. *${saldoBs.toLocaleString('es-VE')}*.\nPor favor gestione su pago.`;
+                    await safeSendMessage(jid, { text: msg });
+                    await randomDelay();
+                }
+            }
+            res.end("OK");
+        });
+    } else if (routename === '/reset-sesion') {
+        try {
+            if (fs.existsSync('auth_info')) {
+                fs.rmSync('auth_info', { recursive: true, force: true });
+            }
+            res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Sesión borrada</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="5;url=/"> </head><body class="bg-light"><div class="container mt-5 text-center"><div class="card shadow p-5 mx-auto" style="max-width:500px;border-radius:15px;"><h3>✅ Sesión borrada</h3><p class="mt-3">La carpeta <strong>auth_info</strong> se eliminó correctamente.</p><p>El bot mostrará un nuevo código QR en <strong>5 segundos</strong>.</p><a href="/" class="btn btn-primary mt-3">Ir al inicio</a></div></div></body></html>`);
+        } catch (e) { res.end("Error al borrar sesión: " + e.message); }
+    } else if (routename === '/notificador-estado') {
+        const total = await notificador.obtenerFacturasNoNotificadasCount();
+        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Notificador</title></head><body class="bg-light">${header}<div class="container mt-5"><div class="card shadow-lg p-4 mx-auto" style="max-width: 600px; border-radius: 15px;"><h3>📬 Notificador</h3><hr><p>Facturas pendientes: <strong>${total}</strong></p><p>Estado: ${isBotReady() ? '<span class="text-success">🟢 Online</span>' : '<span class="text-danger">🔴 Offline</span>'}</p><a href="/" class="btn btn-outline-secondary mt-3">Volver</a></div></div></body></html>`);
+    } else if (routename === '/recordatorio-estado') {
+        const facturas = await notificador.obtenerFacturasVencidas();
+        const enviados = await notificador.obtenerRecordatoriosEnviados();
+        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Recordatorios</title></head><body class="bg-light">${header}<div class="container mt-5"><div class="card shadow-lg p-4 mx-auto" style="max-width: 800px; border-radius: 15px;"><h3>📅 Recordatorios</h3><hr><table class="table table-sm"><thead><tr><th>Factura</th><th>Cliente</th><th>Días</th><th>Estado</th></tr></thead><tbody>${facturas.map(f => `<tr><td>${f.nro_factura}</td><td>${f.nombres}</td><td>${f.dias_vencida}</td><td>${(enviados[f.id_factura]) ? '✅' : '⏳'}</td></tr>`).join('')}</tbody></table><a href="/" class="btn btn-outline-secondary">Volver</a></div></div></body></html>`);
+    } else {
+        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="30"><title>Admin ONE4CARS</title></head><body style="background-color: #f4f7f6;">${header}<div class="container text-center"><div class="card shadow-lg p-4 mx-auto" style="max-width: 500px; border-radius: 15px;"><h4 class="mb-3">Estado del Bot</h4><div class="my-4">${qrCodeData.startsWith('data') ? `<img src="${qrCodeData}" class="img-fluid rounded" style="max-width: 250px;">` : `<h2 class="text-success">${qrCodeData}</h2>`}</div><p>BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}</p><div class="d-grid gap-2"><a href="/cobranza" class="btn btn-primary">PANEL DE COBRANZA</a><a href="/marketing-panel" class="btn btn-info text-white">PANEL DE MARKETING</a><a href="/notificador-estado" class="btn btn-secondary text-white">NOTIFICADOR</a><a href="/recordatorio-estado" class="btn btn-warning text-dark">RECORDATORIOS</a></div></div></div></body></html>`);
+    }
+});
+
+server.listen(PORT, '0.0.0.0', async () => {
+    await initDB();
+    startBot();
+    actualizarDolar();
+    setInterval(actualizarDolar, 3600000);
+});
