@@ -307,6 +307,9 @@ async function buscarProductoPorTexto(texto) {
             f.push(pal + 's');
             if (pal.endsWith('z')) f.push(pal.slice(0, -1) + 'ces');
         }
+        // Corrección agregada para cruzar búsquedas entre masculino y femenino (Ej: delantero <-> delantera)
+        if (pal.endsWith('a') && pal.length > 4) f.push(pal.slice(0, -1) + 'o');
+        if (pal.endsWith('o') && pal.length > 4) f.push(pal.slice(0, -1) + 'a');
         return [...new Set(f)];
     };
 
@@ -331,9 +334,9 @@ async function buscarProductoPorTexto(texto) {
         console.log("Error Intento 1:", e.message);
     }
 
-    let minRelevance = 1;
-    if (palabrasBase.length >= 3) minRelevance = 2; 
-    if (palabrasBase.length >= 5) minRelevance = 3;
+    // Corrección crítica: Se exige que TODAS las palabras base coincidan (minRelevance = palabrasBase.length)
+    // Si el usuario escribe 3 palabras, debe encontrar un producto con las 3 palabras.
+    let minRelevance = palabrasBase.length;
 
     const expandedTerms = [...new Set(palabrasBase.flatMap(expandirFormas))];
     const orConditions = expandedTerms.map(() => "descripcion LIKE ?");
@@ -620,29 +623,34 @@ async function startBot() {
             const sesion = await getSesion(from);
             if (sesion && sesion.modo === 'humano' && !isAdmin) return;
 
-            // --- 1. LÓGICA DE RIF (SÓLO ADMINS) ---
-            if (isAdmin && esRIFPuro) {
-                const rifLimpio = limpiarRIF(rawText);
-                const c = await buscarCliente(rifLimpio);
-                if (c) {
-                    await guardarUsuario(from, rifLimpio, c.id_cliente);
-                    const facturas = await obtenerDetalleFacturas(c.id_cliente);
-                    let totalP = 0; 
-                    let list = `⭐ *CONSULTA DE ESTADO DE CUENTA (ADMIN)*\nCliente: ${c.nombres}\nRIF: ${rifLimpio}\n\n`;
-                    if (facturas.length === 0) {
-                        list += `✅ Sin facturas pendientes.`;
+            // --- 1. LÓGICA DE RIF (ADMINISTRADORES O AVISO DE RESTRICCIÓN) ---
+            if (esRIFPuro) {
+                if (isAdmin) {
+                    const rifLimpio = limpiarRIF(rawText);
+                    const c = await buscarCliente(rifLimpio);
+                    if (c) {
+                        await guardarUsuario(from, rifLimpio, c.id_cliente);
+                        const facturas = await obtenerDetalleFacturas(c.id_cliente);
+                        let totalP = 0; 
+                        let list = `⭐ *CONSULTA DE ESTADO DE CUENTA (ADMIN)*\nCliente: ${c.nombres}\nRIF: ${rifLimpio}\n\n`;
+                        if (facturas.length === 0) {
+                            list += `✅ Sin facturas pendientes.`;
+                        } else {
+                            facturas.forEach(f => {
+                                const monto = (f.total - f.abono_factura) / (f.porcentaje || 1);
+                                totalP += monto;
+                                list += `🔸 *#${f.nro_factura}* | $${monto.toFixed(2)}\n`;
+                                list += `✍️ Firmada: https://www.one4cars.com/uploads/notas/${f.nro_factura}.jpg\n\n`;
+                            });
+                            list += `💰 *TOTAL A PAGAR: $${totalP.toFixed(2)}*`;
+                        }
+                        return await safeSendMessage(from, { text: list });
                     } else {
-                        facturas.forEach(f => {
-                            const monto = (f.total - f.abono_factura) / (f.porcentaje || 1);
-                            totalP += monto;
-                            list += `🔸 *#${f.nro_factura}* | $${monto.toFixed(2)}\n`;
-                            list += `✍️ Firmada: https://www.one4cars.com/uploads/notas/${f.nro_factura}.jpg\n\n`;
-                        });
-                        list += `💰 *TOTAL A PAGAR: $${totalP.toFixed(2)}*`;
+                        return await safeSendMessage(from, { text: "❌ No se encontró ningún cliente con ese RIF." });
                     }
-                    return await safeSendMessage(from, { text: list });
                 } else {
-                    return await safeSendMessage(from, { text: "❌ No se encontró ningún cliente con ese RIF." });
+                    // SI ES USUARIO NORMAL Y ENVÍA UN RIF, SE LE INFORMA QUE ES EXCLUSIVO
+                    return await safeSendMessage(from, { text: "❌ La consulta de estado de cuenta mediante RIF es una función exclusiva para administradores." });
                 }
             }
 
@@ -669,8 +677,7 @@ async function startBot() {
                 }
                 return await safeSendMessage(from, { text: menuOption });
             }
-
-            // ============================================================
+         // ============================================================
             // NUEVO: LÓGICA DE PAGO / ABONO (COLOCAR AQUÍ)
             // ============================================================
             if (text === 'pago fact' || text === 'abono'  || text.includes('pago') || text.includes('al señor oscar') || text.includes('envié el pago') || text.includes('adjunto pago')) {
@@ -679,15 +686,14 @@ async function startBot() {
                 return await safeSendMessage(from, { text: saludoCordial });
             }
 
-            // ============================================================
+                     // ============================================================
             // NUEVO: (Factura Fiscal)
             // ============================================================
-            if (text === 'factura fiscal' || text.includes('factura con iva')  ) {
+            if (text === 'pago fact' || text === 'factura fiscal'  || text.includes('factura con iva')  ) {
                 const nombreUsuario = vendedor ? vendedor.nombre : pushName;
-                const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nLa Factura Fiscal será realizada de acuerdo con su solicitud el día que tenga disponibilidad de hacer el pago.\n\n${MENU_TEXT}`;
+                const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nLa Factura Fiscalk sera realizada de acuerdo con su solicitud el dia que tenga disponibilidad de hacer el pago.\n\n${MENU_TEXT}`;
                 return await safeSendMessage(from, { text: saludoCordial });
             }
-
             // --- 3. LÓGICA DE DESPACHOS Y TIEMPOS ---
             if (text.includes("cuando llega mi pedido") || 
                 text.includes("tiempo tardan en despachar") || 
@@ -748,11 +754,18 @@ async function startBot() {
 
             // --- 6. SALUDO Y MENÚ ---
             if (text === 'menu' || text === 'hola' || text === 'buen dia' || text === 'buenos dias') {
-                const nombreUsuario = seller ? seller.nombre : pushName;
+                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
                 const saludoCordial = `¡Hola *${nombreUsuario}*! Es un gusto saludarte. 😊\n\n¿En qué podemos ayudarte hoy? Por favor, indícanos qué servicio necesitas o consulta nuestro menú a continuación:\n\n${MENU_TEXT}`;
                 return await safeSendMessage(from, { text: saludoCordial });
             }
 
+                        // --- 6. SALUDO Y MENÚ ---
+            if (text === 'Pago fact' || text === 'Abono' ) {
+                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
+                const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nrecibido tu mensaje, administracion validara su pago a la brevedad\n\n${MENU_TEXT}`;
+                return await safeSendMessage(from, { text: saludoCordial });
+            }
+            
             // --- 7. FALLBACK ---
             const conversationalShorts = ['si', 'no', 'ok', 'vale', 'gracias', 'ya', 'entendido', 'está bien', 'bueno', 'dale', 'está ok', 'está bien', 'claro'];
             if (conversationalShorts.includes(text)) return; 
