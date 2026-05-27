@@ -245,6 +245,19 @@ async function buscarCliente(rifLimpio) {
     return r[0] || null;
 }
 
+async function buscarProductoPorCodigo(codigo) {
+    const codLimpio = codigo.trim();
+    const stockCondition = "(cantidad_existencia + cantidad_existencia_almacen > 0)";
+    try {
+        const sql = `SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE producto = ? AND ${stockCondition} LIMIT 1`;
+        const [rows] = await pool.execute(sql, [codLimpio]);
+        if (rows.length > 0) return rows;
+    } catch (e) {
+        console.log("Error buscando por código exacto:", e.message);
+    }
+    return null;
+}
+
 async function buscarProductoPorTexto(texto) {
     const txtNormal = normalizar(texto);
     const stopWords = [
@@ -598,7 +611,10 @@ async function startBot() {
             if (!rawText) return;
 
             const text = normalizar(rawText);
-            const esRIFPuro = /^[vjgje]?\d+$/i.test(rawText.replace(/[^a-zA-Z0-9]/g, '')) && rawText.length = 9;
+            
+            // SE MODIFICÓ LA EXPRESIÓN REGULAR PARA EXIGIR V, J, G o E Y EVITAR FALSOS POSITIVOS CON NÚMEROS DE PRODUCTO.
+            const textoLimpioParaRif = rawText.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+            const esRIFPuro = /^[VJGE]\d{8,9}$/.test(textoLimpioParaRif);
 
             await guardarMensaje(from, 'user', rawText);
             const sesion = await getSesion(from);
@@ -682,7 +698,13 @@ async function startBot() {
             // --- 4. LÓGICA DE PRODUCTOS ---
             if (text !== 'menu' && !['hola', 'buen dia', 'buenos dias'].includes(text)) {
                 try {
-                    const prods = await buscarProductoPorTexto(rawText);
+                    // SE AÑADIÓ LA BÚSQUEDA DIRECTA POR CÓDIGO
+                    let prods = await buscarProductoPorCodigo(rawText);
+                    
+                    if (!prods) {
+                        prods = await buscarProductoPorTexto(rawText);
+                    }
+
                     if (prods) {
                         const saludos = [
                             "Saludos estimado , gracias por tu consulta puedo recomendarte estos artículos: 👇",
@@ -839,4 +861,3 @@ server.listen(PORT, '0.0.0.0', async () => {
     actualizarDolar();
     setInterval(actualizarDolar, 3600000);
 });
-
