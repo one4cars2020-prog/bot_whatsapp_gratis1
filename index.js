@@ -239,7 +239,7 @@ async function guardarUsuario(jid, usuario, id_int) {
 async function buscarCliente(rifLimpio) {
     const soloNum = soloNumerosRIF(rifLimpio);
     const [r] = await pool.execute(
-        "SELECT id_cliente, nombres, celular, cedula, direccion, zona FROM tab_clientes WHERE clave = ? OR clave = ? OR clave LIKE ? LIMIT 1", 
+        "SELECT id_cliente, nombres, cellular, cedula, direccion, zona FROM tab_clientes WHERE clave = ? OR clave = ? OR clave LIKE ? LIMIT 1", 
         [rifLimpio, soloNum, `%${rifLimpio}%`]
     );
     return r[0] || null;
@@ -249,11 +249,17 @@ async function buscarProductoPorCodigo(codigo) {
     const codLimpio = codigo.trim();
     const stockCondition = "(cantidad_existencia + cantidad_existencia_almacen > 0)";
     try {
-        const sql = `SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE producto = ? AND ${stockCondition} LIMIT 1`;
-        const [rows] = await pool.execute(sql, [codLimpio]);
+        // CORRECCIÓN SOLICITADA: Busca por coincidencias parciales (LIKE) en el campo producto si es un código o número corto.
+        // Además ordena priorizando una coincidencia exacta al inicio si existiera, y limita a un máximo de 8 registros coincidentes.
+        const sql = `SELECT producto, descripcion, tipo, precio_final 
+                     FROM tab_productos 
+                     WHERE producto LIKE ? AND ${stockCondition} 
+                     ORDER BY CASE WHEN producto = ? THEN 0 ELSE 1 END, producto ASC 
+                     LIMIT 8`;
+        const [rows] = await pool.execute(sql, [`%${codLimpio}%`, codLimpio]);
         if (rows.length > 0) return rows;
     } catch (e) {
-        console.log("Error buscando por código exacto:", e.message);
+        console.log("Error buscando por coincidencias de código:", e.message);
     }
     return null;
 }
@@ -307,7 +313,6 @@ async function buscarProductoPorTexto(texto) {
             f.push(pal + 's');
             if (pal.endsWith('z')) f.push(pal.slice(0, -1) + 'ces');
         }
-        // Corrección agregada para cruzar búsquedas entre masculino y femenino (Ej: delantero <-> delantera)
         if (pal.endsWith('a') && pal.length > 4) f.push(pal.slice(0, -1) + 'o');
         if (pal.endsWith('o') && pal.length > 4) f.push(pal.slice(0, -1) + 'a');
         return [...new Set(f)];
@@ -334,8 +339,6 @@ async function buscarProductoPorTexto(texto) {
         console.log("Error Intento 1:", e.message);
     }
 
-    // Corrección crítica: Se exige que TODAS las palabras base coincidan (minRelevance = palabrasBase.length)
-    // Si el usuario escribe 3 palabras, debe encontrar un producto con las 3 palabras.
     let minRelevance = palabrasBase.length;
 
     const expandedTerms = [...new Set(palabrasBase.flatMap(expandirFormas))];
@@ -420,7 +423,7 @@ async function checkNuevasFacturas() {
         }
     } catch (e) {
         console.log("[NOTIFICADOR] Error:", e.message);
-    } finally {
+    } fillly {
         notificadorEjecutando = false;
     }
 }
@@ -478,7 +481,7 @@ async function checkFacturasVencidas() {
         }
     } catch (e) {
         console.log("[RECORDATORIO] Error:", e.message);
-    } finally {
+    } fillly {
         recordatorioEjecutando = false;
     }
 }
@@ -536,7 +539,7 @@ async function checkVendedoresRecordatorio() {
         console.log(`[VENDEDORES] ${Object.keys(vendedoresMap).length} vendedor(es) notificado(s).`);
     } catch (e) {
         console.log("[VENDEDORES] Error:", e.message);
-    } finally {
+    } fillly {
         vendedorEjecutando = false;
     }
 }
@@ -615,7 +618,6 @@ async function startBot() {
 
             const text = normalizar(rawText);
             
-            // SE MODIFICÓ LA EXPRESIÓN REGULAR PARA EXIGIR V, J, G o E Y EVITAR FALSOS POSITIVOS CON NÚMEROS DE PRODUCTO.
             const textoLimpioParaRif = rawText.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
             const esRIFPuro = /^[VJGE]\d{8,9}$/.test(textoLimpioParaRif);
 
@@ -649,7 +651,6 @@ async function startBot() {
                         return await safeSendMessage(from, { text: "❌ No se encontró ningún cliente con ese RIF." });
                     }
                 } else {
-                    // SI ES USUARIO NORMAL Y ENVÍA UN RIF, SE LE INFORMA QUE ES EXCLUSIVO
                     return await safeSendMessage(from, { text: "❌ La consulta de estado de cuenta mediante RIF es una función exclusiva para administradores." });
                 }
             }
@@ -677,8 +678,9 @@ async function startBot() {
                 }
                 return await safeSendMessage(from, { text: menuOption });
             }
-         // ============================================================
-            // NUEVO: LÓGICA DE PAGO / ABONO (COLOCAR AQUÍ)
+
+            // ============================================================
+            // LOGICA DE PAGO / ABONO
             // ============================================================
             if (text === 'pago fact' || text === 'abono'  || text.includes('pago') || text.includes('al señor oscar') || text.includes('envié el pago') || text.includes('adjunto pago')) {
                 const nombreUsuario = vendedor ? vendedor.nombre : pushName;
@@ -686,14 +688,15 @@ async function startBot() {
                 return await safeSendMessage(from, { text: saludoCordial });
             }
 
-                     // ============================================================
-            // NUEVO: (Factura Fiscal)
             // ============================================================
-            if (text === 'pago fact' || text === 'factura fiscal'  || text.includes('factura con iva')  ) {
+            // (Factura Fiscal)
+            // ============================================================
+            if (text === 'factura fiscal' || text.includes('factura con iva')) {
                 const nombreUsuario = vendedor ? vendedor.nombre : pushName;
-                const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nLa Factura Fiscalk sera realizada de acuerdo con su solicitud el dia que tenga disponibilidad de hacer el pago.\n\n${MENU_TEXT}`;
+                const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nLa Factura Fiscal será realizada de acuerdo con su solicitud el día que tenga disponibilidad de hacer el pago.\n\n${MENU_TEXT}`;
                 return await safeSendMessage(from, { text: saludoCordial });
             }
+
             // --- 3. LÓGICA DE DESPACHOS Y TIEMPOS ---
             if (text.includes("cuando llega mi pedido") || 
                 text.includes("tiempo tardan en despachar") || 
@@ -706,7 +709,7 @@ async function startBot() {
             // --- 4. LÓGICA DE PRODUCTOS ---
             if (text !== 'menu' && !['hola', 'buen dia', 'buenos dias'].includes(text)) {
                 try {
-                    // SE AÑADIÓ LA BÚSQUEDA DIRECTA POR CÓDIGO
+                    // SE EJECUTA LA BÚSQUEDA POR COINCIDENCIAS DE CÓDIGO (PARCIAL/EXACTO) EN EL CAMPO 'PRODUCTO'
                     let prods = await buscarProductoPorCodigo(rawText);
                     
                     if (!prods) {
@@ -717,7 +720,7 @@ async function startBot() {
                         const saludos = [
                             "Saludos estimado , gracias por tu consulta puedo recomendarte estos artículos: 👇",
                             "¡Hola! He buscado en nuestro inventario y creo que estos artículos es lo que buscas: 👇",
-                            "Con gusto le ayudo. Segun lo que me dices, aquí tienes la mejor opcion disponible: 👇",
+                            "Con gusto le ayudo. Según lo que me dices, aquí tienes la mejor opción disponible: 👇",
                             "Hola, un placer saludarle. He encontrado estos productos que coinciden con su búsqueda: 👇"
                         ];
                         const saludoAzar = saludos[Math.floor(Math.random() * saludos.length)];
@@ -754,20 +757,13 @@ async function startBot() {
 
             // --- 6. SALUDO Y MENÚ ---
             if (text === 'menu' || text === 'hola' || text === 'buen dia' || text === 'buenos dias') {
-                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
+                const nombreUsuario = seller ? seller.nombre : pushName;
                 const saludoCordial = `¡Hola *${nombreUsuario}*! Es un gusto saludarte. 😊\n\n¿En qué podemos ayudarte hoy? Por favor, indícanos qué servicio necesitas o consulta nuestro menú a continuación:\n\n${MENU_TEXT}`;
-                return await safeSendMessage(from, { text: saludoCordial });
-            }
-
-                        // --- 6. SALUDO Y MENÚ ---
-            if (text === 'Pago fact' || text === 'Abono' ) {
-                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
-                const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nrecibido tu mensaje, administracion validara su pago a la brevedad\n\n${MENU_TEXT}`;
                 return await safeSendMessage(from, { text: saludoCordial });
             }
             
             // --- 7. FALLBACK ---
-            const conversationalShorts = ['si', 'no', 'ok', 'vale', 'gracias', 'ya', 'entendido', 'está bien', 'bueno', 'dale', 'está ok', 'está bien', 'claro'];
+            const conversationalShorts = ['si', 'no', 'ok', 'vale', 'gracias', 'ya', 'entendido', 'está bien', 'bueno', 'dale', 'está ok', 'claro'];
             if (conversationalShorts.includes(text)) return; 
             if (rawText.length > 500) return;
 
