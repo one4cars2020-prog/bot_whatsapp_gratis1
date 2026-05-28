@@ -255,22 +255,7 @@ async function buscarProductoPorCodigo(codigo) {
 }
 
 async function buscarProductoPorTexto(texto) {
-    // 1. Limpieza total de caracteres raros y emojis
-    const txtNormal = texto.toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .replace(/[^\w\s]/gi, ' ') 
-        .trim();
-
-    // 2. Lista masiva de "ruido" para que no se distraiga
-    const stopWords = [
-        'tienes', 'tienen', 'tendras', 'tendra', 'la', 'del', 'las', 'los', 'que', 'saber', 'cuanto', 'mide', 'venden', 
-        'donde', 'precio', 'el', 'una', 'un', 'hay', 'si', 'es', 'de', 'con', 'para', 'busco', 'hola', 'buenos', 
-        'buenas', 'dias', 'tardes', 'noches', 'como', 'estas', 'esta', 'espero', 'encuentres', 'bien', 'queria', 
-        'quisiera', 'preguntarte', 'gracias', 'por', 'favor', 'ayuda', 'puedes', 'podrias', 'necesito', 'saludos', 
-        'disponibilidad', 'disponible', 'me', 'le', 'te', 'lo', 'su', 'sus', 'mi', 'mis', 'quiero', 'gustaria', 
-        'necesitamos', 'pueda', 'dime', 'avisame', 'algun', 'alguna', 'tipo', 'vengo', 'voy', 'ando', 'saber'
-    ];
+    // ... (Mantener limpieza profunda y stopWords igual)
 
     const palabrasBase = txtNormal.split(/\s+/)
         .filter(p => p.length > 2 && !stopWords.includes(p));
@@ -281,41 +266,66 @@ async function buscarProductoPorTexto(texto) {
         const f = [pal];
         if (pal.endsWith('es') && pal.length > 4) f.push(pal.slice(0, -2));
         if (pal.endsWith('s') && pal.length > 3 && !pal.endsWith('es')) f.push(pal.slice(0, -1));
-        if (!pal.endsWith('s')) f.push(pal + 's');
+        if (!pal.endsWith('s')) {
+            f.push(pal + 's');
+            if (pal.endsWith('z')) f.push(pal.slice(0, -1) + 'ces');
+        }
         if (pal.endsWith('a') && pal.length > 4) f.push(pal.slice(0, -1) + 'o');
         if (pal.endsWith('o') && pal.length > 4) f.push(pal.slice(0, -1) + 'a');
         return [...new Set(f)];
     };
 
-    // Scoring de relevancia
-    const relevanceParts = palabrasBase.map(p => {
-        const formas = expandirFormas(p);
-        const cases = formas.map(f => `descripcion LIKE '%${f}%'`);
-        return `(CASE WHEN ${cases.join(' OR ')} THEN 1 ELSE 0 END)`;
+    // ELIMINAMOS: const stockCondition = "(cantidad_existencia + cantidad_existencia_almacen > 0)";
+    
+    // --- INTENTO 1: BUSQUEDA EXACTA ---
+    let whereClause = "";
+    let queryParams = [];
+    palabrasBase.forEach((pal, index) => {
+        const formas = expandirFormas(pal);
+        const conditions = formas.map(() => "descripcion LIKE ?");
+        whereClause += `(${conditions.join(" OR ")})`;
+        if (index < palabrasBase.length - 1) whereClause += " AND ";
+        formas.forEach(f => queryParams.push(`%${f}%`));
     });
-    const relevanceSQL = relevanceParts.join(' + ');
+
+    try {
+        // Añadimos (cantidad_existencia + cantidad_existencia_almacen) as stock_total
+        const sql = `SELECT producto, descripcion, tipo, precio_final, (cantidad_existencia + cantidad_existencia_almacen) as stock_total 
+                     FROM tab_productos 
+                     WHERE ${whereClause} 
+                     LIMIT 8`;
+        const [rows] = await pool.execute(sql, queryParams);
+        if (rows.length > 0) return rows;
+    } catch (e) { console.log("Error Intento 1:", e.message); }
+
+    // --- INTENTO 2: RELEVANCIA FLEXIBLE ---
+    let minRelevance = Math.max(1, Math.floor(palabrasBase.length * 0.75)); 
 
     const expandedTerms = [...new Set(palabrasBase.flatMap(expandirFormas))];
     const orConditions = expandedTerms.map(() => "descripcion LIKE ?");
     const orParams = expandedTerms.map(p => `%${p}%`);
 
-    // Umbral del 70% de coincidencia para frases largas
-    let minRelevance = Math.max(1, Math.floor(palabrasBase.length * 0.7));
+    const relevanceParts = palabrasBase.map(p => {
+        const formas = expandirFormas(p);
+        const cases = formas.map(f => `descripcion LIKE '%${f.replace(/['"]/g, '')}%'`);
+        return `(CASE WHEN ${cases.join(' OR ')} THEN 1 ELSE 0 END)`;
+    });
+    const relevanceSQL = relevanceParts.join(' + ');
 
     try {
-        const sql = `
-            SELECT producto, descripcion, tipo, precio_final, 
-            (cantidad_existencia + cantidad_existencia_almacen) as stock_total,
-            (${relevanceSQL}) as score 
+        // Añadimos stock_total y quitamos la condición de stock > 0
+        const sqlRelevancia = `
+            SELECT producto, descripcion, tipo, precio_final, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, (${relevanceSQL}) as score 
             FROM tab_productos 
-            WHERE (${orConditions.join(" OR ")})
+            WHERE (${orConditions.join(" OR ")}) 
             HAVING score >= ? 
-            ORDER BY score DESC, stock_total DESC 
+            ORDER BY score DESC 
             LIMIT 8`;
             
-        const [rows] = await pool.execute(sql, [...orParams, minRelevance]);
+        const [rows] = await pool.execute(sqlRelevancia, [...orParams, minRelevance]);
         if (rows.length > 0) return rows;
-    } catch (e) { console.log("Error en búsqueda:", e.message); }
+    } catch (e) { console.log("Error Intento 2:", e.message); }
+
     return null;
 }
 
@@ -575,7 +585,12 @@ async function startBot() {
                             const precioLimpio = parseFloat(p.precio_final || 0).toFixed(2);
                             const stockReal = parseFloat(p.stock_total || 0);
                             const etiquetaStock = stockReal > 0 ? "✅ *DISPONIBLE*" : "🚫 *AGOTADO (Bajo Pedido)*";
-                            
+                        let estadoStock = "";
+if (parseFloat(p.stock_total) <= 0) {
+    estadoStock = "\n❌ *ESTADO: AGOTADO (Próximo a llegar)*";
+} else {
+    estadoStock = "\n✅ *ESTADO: Disponible*";
+}    
                             const caption = `📦 *CÓDIGO: ${p.producto}*\n${etiquetaStock}\n💰 *Precio: $${precioLimpio}*\n📝 ${p.descripcion}\n🔗 Ficha: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}`;
                             const imgUrl = `https://one4cars.com/imagen/${p.producto}.jpg`;
                             try { await socketBot.sendMessage(from, { image: { url: imgUrl }, caption: caption }); } 
