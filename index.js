@@ -744,6 +744,15 @@ async function startBot() {
 
             // --- 5. COMANDOS DE ADMINISTRADOR ---
             if (isAdmin) {
+                // MODIFICACION: BUSCAR NOTA POR NUMERO (Ej: "nota 5947")
+                const notaMatch = text.match(/nota\s+(\d+)/);
+                if (notaMatch) {
+                    const numNota = notaMatch[1];
+                    const linkNota = `https://www.one4cars.com/uploads/notas/${numNota}.jpg`;
+                    const msgNota = `✍️ *Factura Firmada #${numNota}*\n\nPuede ver la imagen aquí:\n${linkNota}`;
+                    return await safeSendMessage(from, { text: msgNota });
+                }
+
                 if (text === 'dolar' || text === 'bcv' || text === 'paralelo' ) {
                     await actualizarDolar();
                     return await safeSendMessage(from, { text: `💵 BCV: ${dolarInfo.bcv}\n📈 Paralelo: ${dolarInfo.paralelo}` });
