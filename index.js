@@ -56,7 +56,6 @@ const MENU_TEXT = `📋 *MENÚ PRINCIPAL ONE4CARS*
 
 _Escriba el número de la opción o su consulta directamente._`;
 
-// ===== MAPA DE INTENCIONES REFORMULADO (Para evitar falsos positivos) =====
 const MENU_INTENTIONS = {
     '1': {
         keywords: ['medios de pago', 'pago movil', 'datos de pago', 'como pagar', 'datos bancarios', 'cuentas para pagar'],
@@ -172,12 +171,10 @@ async function buscarVendedor(jid, pushName) {
 
 function detectarIntencionMenu(texto) {
     if (!texto) return null;
-    // 1. Verificar si el usuario escribió solo el número (ej: "1", "2")
     if (/^\d$/.test(texto)) {
         const num = texto.charAt(0);
         if (MENU_INTENTIONS[num]) return MENU_INTENTIONS[num].response;
     }
-    // 2. Verificar frases completas para evitar falsos positivos
     for (const key in MENU_INTENTIONS) {
         const intention = MENU_INTENTIONS[key];
         if (intention.keywords.some(phrase => texto.includes(phrase))) {
@@ -248,7 +245,6 @@ async function buscarCliente(rifLimpio) {
 async function buscarProductoPorCodigo(codigo) {
     const codLimpio = codigo.trim();
     try {
-        // Eliminamos la condición de stock > 0
         const sql = `SELECT producto, descripcion, tipo, precio_final, (cantidad_existencia + cantidad_existencia_almacen) as stock_total FROM tab_productos WHERE producto = ? LIMIT 1`;
         const [rows] = await pool.execute(sql, [codLimpio]);
         if (rows.length > 0) return rows;
@@ -259,35 +255,21 @@ async function buscarProductoPorCodigo(codigo) {
 }
 
 async function buscarProductoPorTexto(texto) {
-    // 1. Limpieza profunda (incluyendo emojis y caracteres raros)
+    // 1. Limpieza total de caracteres raros y emojis
     const txtNormal = texto.toLowerCase()
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")
-        .replace(/[^\w\s]/gi, ' ') // Mantiene letras y números, cambia lo demás por espacio
+        .replace(/[^\w\s]/gi, ' ') 
         .trim();
 
+    // 2. Lista masiva de "ruido" para que no se distraiga
     const stopWords = [
-        'tienes', 'tienes', 'tienen', 'tendras', 'tendran', 'tendra', 'la', 'del', 'quiere', 'saber', 'cuanto', 'mide', 'venden', 'donde',
-        'precio', 'tienen', 'el', 'una', 'un', 'hay', 'si', 'es', 'de', 'con', 'para',
-        'busco', 'hola', 'buenos', 'buenas', 'dias', 'tardes', 'noches', 'como', 'estas',
-        'esta', 'familia', 'espero', 'encuentres', 'bien', 'queria', 'quisiera', 'queria',
-        'preguntarte', 'gracias', 'por', 'favor', 'ayuda', 'puedes', 'podrias', 'pudieras',
-        'necesito', 'saludos', 'cordial', 'muchas', 'todo', 'bienvenidos', 'disponibilidad',
-        'disponible', 'disponibles', 'bendiciones', 'exito', 'exitos', 'dia', 'tarde', 'noche', 
-        'pregunta', 'consulta', 'atento', 'atenta', 'saludo', 'estimados', 'estimado', 'buen', 
-        'buena', 'bueno', 'se', 'me', 'le', 'te', 'lo', 'los', 'las', 'les', 'su', 'sus', 'mi', 
-        'mis', 'tu', 'tus', 'nos', 'os', 'que', 'cual', 'cuales', 'quien', 'quienes',
-        'cuando', 'porque', 'pues', 'pero', 'mas', 'muy', 'asi', 'aun', 'entre', 'sin',
-        'sobre', 'tras', 'durante', 'mediante', 'excepto', 'segun', 'puede', 'puedo',
-        'pueden', 'podemos', 'podria', 'hacer', 'hace', 'hacen', 'ser', 'estar', 'tener',
-        'tengo', 'tenemos', 'tiene', 'decir', 'dice', 'dicen', 'digo', 'ver', 'veo',
-        'ven', 'vez', 'veces', 'quiero', 'quiere', 'quieren', 'queremos', 'gustaria',
-        'gusta', 'gustan', 'gusto', 'necesita', 'necesitan', 'necesitamos', 'pueda',
-        'unid', 'unidades', 'unidad', 'listo', 'claro', 'ok', 'okey', 'vale', 'va',
-        'vamos', 'vaya', 'algun', 'alguna', 'algunos', 'algunas', 'ningun', 'ninguna',
-        'tipo', 'tipos', 'preguntar', 'disculpa', 'disculpe', 'permiso', 'ayudar',
-        'apoyo', 'info', 'informacion', 'decirme', 'dime', 'avisame', 'avisa',
-        'pana', 'brother', 'amigo', 'compa', 'porfa', 'porfavor'
+        'tienes', 'tienen', 'tendras', 'tendra', 'la', 'del', 'las', 'los', 'que', 'saber', 'cuanto', 'mide', 'venden', 
+        'donde', 'precio', 'el', 'una', 'un', 'hay', 'si', 'es', 'de', 'con', 'para', 'busco', 'hola', 'buenos', 
+        'buenas', 'dias', 'tardes', 'noches', 'como', 'estas', 'esta', 'espero', 'encuentres', 'bien', 'queria', 
+        'quisiera', 'preguntarte', 'gracias', 'por', 'favor', 'ayuda', 'puedes', 'podrias', 'necesito', 'saludos', 
+        'disponibilidad', 'disponible', 'me', 'le', 'te', 'lo', 'su', 'sus', 'mi', 'mis', 'quiero', 'gustaria', 
+        'necesitamos', 'pueda', 'dime', 'avisame', 'algun', 'alguna', 'tipo', 'vengo', 'voy', 'ando', 'saber'
     ];
 
     const palabrasBase = txtNormal.split(/\s+/)
@@ -299,65 +281,44 @@ async function buscarProductoPorTexto(texto) {
         const f = [pal];
         if (pal.endsWith('es') && pal.length > 4) f.push(pal.slice(0, -2));
         if (pal.endsWith('s') && pal.length > 3 && !pal.endsWith('es')) f.push(pal.slice(0, -1));
-        if (!pal.endsWith('s')) {
-            f.push(pal + 's');
-            if (pal.endsWith('z')) f.push(pal.slice(0, -1) + 'ces');
-        }
+        if (!pal.endsWith('s')) f.push(pal + 's');
         if (pal.endsWith('a') && pal.length > 4) f.push(pal.slice(0, -1) + 'o');
         if (pal.endsWith('o') && pal.length > 4) f.push(pal.slice(0, -1) + 'a');
         return [...new Set(f)];
     };
 
-    const stockCondition = "(cantidad_existencia + cantidad_existencia_almacen > 0)";
-    
-    // --- INTENTO 1: BUSQUEDA EXACTA DE TODAS LAS PALABRAS ---
-    let whereClause = "";
-    let queryParams = [];
-    palabrasBase.forEach((pal, index) => {
-        const formas = expandirFormas(pal);
-        const conditions = formas.map(() => "descripcion LIKE ?");
-        whereClause += `(${conditions.join(" OR ")})`;
-        if (index < palabrasBase.length - 1) whereClause += " AND ";
-        formas.forEach(f => queryParams.push(`%${f}%`));
+    // Scoring de relevancia
+    const relevanceParts = palabrasBase.map(p => {
+        const formas = expandirFormas(p);
+        const cases = formas.map(f => `descripcion LIKE '%${f}%'`);
+        return `(CASE WHEN ${cases.join(' OR ')} THEN 1 ELSE 0 END)`;
     });
-
-    try {
-        const sql = `SELECT producto, descripcion, tipo, precio_final FROM tab_productos WHERE ${stockCondition} AND ${whereClause} LIMIT 8`;
-        const [rows] = await pool.execute(sql, queryParams);
-        if (rows.length > 0) return rows;
-    } catch (e) { console.log("Error Intento 1:", e.message); }
-
-    // --- INTENTO 2: RELEVANCIA FLEXIBLE (Aquí está la magia) ---
-    // Si el usuario puso 5 palabras, permitimos que encuentre el producto si coinciden al menos 3 o 4.
-    let minRelevance = Math.max(1, Math.floor(palabrasBase.length * 0.75)); 
+    const relevanceSQL = relevanceParts.join(' + ');
 
     const expandedTerms = [...new Set(palabrasBase.flatMap(expandirFormas))];
     const orConditions = expandedTerms.map(() => "descripcion LIKE ?");
     const orParams = expandedTerms.map(p => `%${p}%`);
 
-    const relevanceParts = palabrasBase.map(p => {
-        const formas = expandirFormas(p);
-        // Quitamos el replace de [^a-z] para no romper si el producto tiene números (ej: 1.6, 2005)
-        const cases = formas.map(f => `descripcion LIKE '%${f.replace(/['"]/g, '')}%'`);
-        return `(CASE WHEN ${cases.join(' OR ')} THEN 1 ELSE 0 END)`;
-    });
-    const relevanceSQL = relevanceParts.join(' + ');
+    // Umbral del 70% de coincidencia para frases largas
+    let minRelevance = Math.max(1, Math.floor(palabrasBase.length * 0.7));
 
     try {
-        const sqlRelevancia = `
-            SELECT producto, descripcion, tipo, precio_final, (${relevanceSQL}) as score 
+        const sql = `
+            SELECT producto, descripcion, tipo, precio_final, 
+            (cantidad_existencia + cantidad_existencia_almacen) as stock_total,
+            (${relevanceSQL}) as score 
             FROM tab_productos 
-            WHERE ${stockCondition} AND (${orConditions.join(" OR ")}) 
+            WHERE (${orConditions.join(" OR ")})
             HAVING score >= ? 
-            ORDER BY score DESC 
+            ORDER BY score DESC, stock_total DESC 
             LIMIT 8`;
             
-        const [rows] = await pool.execute(sqlRelevancia, [...orParams, minRelevance]);
+        const [rows] = await pool.execute(sql, [...orParams, minRelevance]);
         if (rows.length > 0) return rows;
-    } catch (e) { console.log("Error Intento 2:", e.message); }
-
+    } catch (e) { console.log("Error en búsqueda:", e.message); }
     return null;
 }
+
 async function obtenerDetalleFacturas(id_cliente, id_vendedor = null) {
     let query = `
         SELECT f.id_factura, f.nro_factura, f.total, f.abono_factura, f.fecha_reg, f.porcentaje, f.descuento, f.total_desc,
@@ -382,7 +343,6 @@ async function actualizarDolar() {
 
 // ===== NOTIFICADOR DE FACTURAS NUEVAS =====
 let notificadorEjecutando = false;
-
 async function checkNuevasFacturas() {
     if (!isBotReady() || notificadorEjecutando) return;
     notificadorEjecutando = true;
@@ -402,23 +362,14 @@ async function checkNuevasFacturas() {
                     await safeSendMessage(jidV, { text: msgV });
                 }
             }
-
             await pool.execute("UPDATE tab_facturas SET whatsapp_notificado = 'SI' WHERE id_factura = ?", [f.id_factura]);
             await sleep(1000);
         }
-        if (facturas.length > 0) {
-            console.log(`[NOTIFICADOR] ${facturas.length} factura(s) notificada(s).`);
-        }
-    } catch (e) {
-        console.log("[NOTIFICADOR] Error:", e.message);
-    } finally {
-        notificadorEjecutando = false;
-    }
+    } catch (e) { console.log("[NOTIFICADOR] Error:", e.message); } finally { notificadorEjecutando = false; }
 }
 
 // ===== RECORDATORIOS DE FACTURAS VENCIDAS =====
 let recordatorioEjecutando = false;
-
 function obtenerNivelRecordatorio(dias) {
     if (dias >= 60) return 60;
     if (dias >= 50) return 50;
@@ -426,7 +377,6 @@ function obtenerNivelRecordatorio(dias) {
     if (dias >= 30) return 30;
     return null;
 }
-
 function obtenerTonoMensaje(nivel, f, monto, fecha) {
     if (nivel >= 60) {
         return `🧾 *AVISO DE PAGO PENDIENTE*\n\nHola *${f.nombres}*, la factura *N° ${f.nro_factura}* emitida el *${fecha}* ya superó los 60 días de vencida con un saldo de *$${monto.toFixed(2)}*.\n\nEl retraso en el pago afecta la rotación de nuestros productos y la disponibilidad de inventario para todos nuestros clientes. Le agradecemos realizar el pago a la mayor brevedad posible.\n\nQuedamos a su disposición para cualquier duda o gestión. 🚗`;
@@ -441,15 +391,12 @@ async function checkFacturasVencidas() {
         const facturas = await notificador.obtenerFacturasVencidas();
         const enviados = await notificador.obtenerRecordatoriosEnviados();
         let cont = 0;
-
         for (const f of facturas) {
             const dias = f.dias_vencida;
             const nivel = obtenerNivelRecordatorio(dias);
             if (!nivel) continue;
-
             const monto = (parseFloat(f.total) - parseFloat(f.abono_factura || 0)) / (parseFloat(f.porcentaje) || 1);
             if (monto <= 0) continue;
-
             const fecha = new Date(f.fecha_reg).toISOString().split('T')[0];
             const yaEnviado = enviados[f.id_factura] && enviados[f.id_factura].includes(nivel);
             if (!yaEnviado) {
@@ -463,96 +410,58 @@ async function checkFacturasVencidas() {
                 await sleep(1000);
             }
         }
-
-        if (cont > 0) {
-            console.log(`[RECORDATORIO] ${cont} cliente(s) notificado(s).`);
-        }
-    } catch (e) {
-        console.log("[RECORDATORIO] Error:", e.message);
-    } finally {
-        recordatorioEjecutando = false;
-    }
+    } catch (e) { console.log("[RECORDATORIO] Error:", e.message); } finally { recordatorioEjecutando = false; }
 }
 
 // ===== RECORDATORIO A VENDEDORES =====
 let vendedorEjecutando = false;
-
 async function checkVendedoresRecordatorio() {
     if (!isBotReady() || vendedorEjecutando) return;
     vendedorEjecutando = true;
     try {
         const hoy = new Date().getDay();
         if (hoy === 0 || hoy === 6) return;
-
         const ultimo = await notificador.obtenerUltimoEnvioVendedor();
         if (ultimo) {
             const diff = Math.floor((new Date() - new Date(ultimo)) / 86400000);
             if (diff < 3) return;
         }
-
         const facturas = await notificador.obtenerFacturasVencidasAll();
         const vendedoresMap = {};
-
         for (const f of facturas) {
             const dias = f.dias_vencida;
             if (dias < 30) continue;
-
             let monto = (parseFloat(f.total) - parseFloat(f.abono_factura || 0)) / (parseFloat(f.porcentaje) || 1);
             if (monto <= 0 || !f.celular_vendedor) continue;
-
-            if (f.vendedor_nombre && f.vendedor_nombre.toUpperCase() === 'MANUEL FERRAZ') {
-                monto = monto / 0.80;
-            }
-
             const key = f.celular_vendedor.toString().replace(/\D/g, '');
             if (!vendedoresMap[key]) {
-                vendedoresMap[key] = {
-                    nombre: f.vendedor_nombre || 'Vendedor',
-                    jid: formatWhatsApp(f.celular_vendedor),
-                    facturas: []
-                };
+                vendedoresMap[key] = { nombre: f.vendedor_nombre || 'Vendedor', jid: formatWhatsApp(f.celular_vendedor), facturas: [] };
             }
             vendedoresMap[key].facturas.push(`🔹 *N° ${f.nro_factura}* - ${f.nombres} - $${monto.toFixed(2)} (${dias} días)`);
         }
-
         for (const key of Object.keys(vendedoresMap)) {
             const v = vendedoresMap[key];
             if (!v.jid || v.facturas.length === 0) continue;
-            const msg = `📢 *RESUMEN DE CLIENTES VENCIDOS*\n\nVendedor: *${v.nombre}*\n\n${v.facturas.join('\n')}\n\nLe recordamos la importancia de gestionar estos cobros para mantener la rotación de productos.`;
+            const msg = `📢 *RESUMEN DE CLIENTES VENCIDOS*\n\nVendedor: *${v.nombre}*\n\n${v.facturas.join('\n')}\n\nLe recordamos la importancia de gestionar estos cobros.`;
             await safeSendMessage(v.jid, { text: msg });
             await sleep(1000);
         }
-
         await notificador.marcarEnvioVendedor();
-        console.log(`[VENDEDORES] ${Object.keys(vendedoresMap).length} vendedor(es) notificado(s).`);
-    } catch (e) {
-        console.log("[VENDEDORES] Error:", e.message);
-    } finally {
-        vendedorEjecutando = false;
-    }
+    } catch (e) { console.log("[VENDEDORES] Error:", e.message); } finally { vendedorEjecutando = false; }
 }
 
 // ===== BOT WHATSAPP =====
 async function startBot() {
     if (socketBot) {
-        try {
-            socketBot.removeAllListeners();
-            socketBot.end(undefined);
-        } catch (e) {}
+        try { socketBot.removeAllListeners(); socketBot.end(undefined); } catch (e) {}
         socketBot = null;
     }
-
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
     const { version } = await fetchLatestBaileysVersion();
-
     const sock = makeWASocket({
-        version,
-        auth: state,
-        logger: pino({ level: 'silent' }),
-        printQRInTerminal: false,
-        browser: ["ONE4CARS MASTER", "Chrome", "1.0.0"]
+        version, auth: state, logger: pino({ level: 'silent' }),
+        printQRInTerminal: false, browser: ["ONE4CARS MASTER", "Chrome", "1.0.0"]
     });
-
     socketBot = sock;
     sock.ev.on('creds.update', saveCreds);
 
@@ -560,15 +469,12 @@ async function startBot() {
         const { connection, lastDisconnect, qr } = u;
         if (qr) qrcode.toDataURL(qr, { scale: 10 }, (_, url) => qrCodeData = url);
         if (connection === 'open') { 
-            qrCodeData = "ONLINE ✅"; 
-            console.log("🚀 BOT MASTER ONLINE");
+            qrCodeData = "ONLINE ✅"; console.log("🚀 BOT MASTER ONLINE");
             if (!notificadorInterval) {
                 notificadorInterval = setInterval(checkNuevasFacturas, 45000);
                 setInterval(checkFacturasVencidas, 86400000);
                 setInterval(checkVendedoresRecordatorio, 86400000);
-                setInterval(() => {
-                    if (!isBotReady() && socketBot) startBot();
-                }, 300000);
+                setInterval(() => { if (!isBotReady() && socketBot) startBot(); }, 300000);
             }
         }
         if (connection === 'close') {
@@ -582,10 +488,8 @@ async function startBot() {
             if (type !== 'notify') return;
             const msg = messages[0];
             if (!msg.message) return;
-
             const from = msg.key.remoteJid;
             if (from === 'status@broadcast' || from.includes('@g.us')) return;
-
             const isAdmin = ADMIN_IDS.some(id => from.includes(id));
             const vendedor = await buscarVendedor(from, msg.pushName || "Vendedor");
 
@@ -594,19 +498,14 @@ async function startBot() {
                 if (textMe === '!bot') {
                     await setModo(from, 'bot');
                     await safeSendMessage(from, { text: "🤖 Bot reactivado para este chat." });
-                } else {
-                    await setModo(from, 'humano');
-                }
+                } else { await setModo(from, 'humano'); }
                 return;
             }
 
             const pushName = msg.pushName || "Usuario";
             const rawText = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").trim();
             if (!rawText) return;
-
             const text = normalizar(rawText);
-            
-            // SE MODIFICÓ LA EXPRESIÓN REGULAR PARA EXIGIR V, J, G o E Y EVITAR FALSOS POSITIVOS CON NÚMEROS DE PRODUCTO.
             const textoLimpioParaRif = rawText.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
             const esRIFPuro = /^[VJGE]\d{8,9}$/.test(textoLimpioParaRif);
 
@@ -614,7 +513,6 @@ async function startBot() {
             const sesion = await getSesion(from);
             if (sesion && sesion.modo === 'humano' && !isAdmin) return;
 
-            // --- 1. LÓGICA DE RIF (ADMINISTRADORES O AVISO DE RESTRICCIÓN) ---
             if (esRIFPuro) {
                 if (isAdmin) {
                     const rifLimpio = limpiarRIF(rawText);
@@ -622,148 +520,88 @@ async function startBot() {
                     if (c) {
                         await guardarUsuario(from, rifLimpio, c.id_cliente);
                         const facturas = await obtenerDetalleFacturas(c.id_cliente);
-                        let totalP = 0; 
-                        let list = `⭐ *CONSULTA DE ESTADO DE CUENTA (ADMIN)*\nCliente: ${c.nombres}\nRIF: ${rifLimpio}\n\n`;
-                        if (facturas.length === 0) {
-                            list += `✅ Sin facturas pendientes.`;
-                        } else {
+                        let totalP = 0; let list = `⭐ *CONSULTA (ADMIN)*\nCliente: ${c.nombres}\n\n`;
+                        if (facturas.length === 0) { list += `✅ Sin facturas pendientes.`; } 
+                        else {
                             facturas.forEach(f => {
                                 const monto = (f.total - f.abono_factura) / (f.porcentaje || 1);
                                 totalP += monto;
-                                list += `🔸 *#${f.nro_factura}* | $${monto.toFixed(2)}\n`;
-                                list += `✍️ Firmada: https://www.one4cars.com/uploads/notas/${f.nro_factura}.jpg\n\n`;
+                                list += `🔸 *#${f.nro_factura}* | $${monto.toFixed(2)}\n✍️ Firmada: https://www.one4cars.com/uploads/notas/${f.nro_factura}.jpg\n\n`;
                             });
                             list += `💰 *TOTAL A PAGAR: $${totalP.toFixed(2)}*`;
                         }
                         return await safeSendMessage(from, { text: list });
-                    } else {
-                        return await safeSendMessage(from, { text: "❌ No se encontró ningún cliente con ese RIF." });
-                    }
-                } else {
-                    // SI ES USUARIO NORMAL Y ENVÍA UN RIF, SE LE INFORMA QUE ES EXCLUSIVO
-                    return await safeSendMessage(from, { text: "❌ La consulta de estado de cuenta mediante RIF es una función exclusiva para administradores." });
-                }
+                    } else { return await safeSendMessage(from, { text: "❌ No encontrado." }); }
+                } else { return await safeSendMessage(from, { text: "❌ Función exclusiva admin." }); }
             }
 
-            // --- 2. DETECCIÓN INTELIGENTE DEL MENÚ ---
             const menuOption = detectarIntencionMenu(text);
             if (menuOption) {
                 if (menuOption.includes('Estado de cuenta')) {
                     const targetID = sesion?.id_cliente_int;
-                    if (!targetID) {
-                        return await safeSendMessage(from, { text: "Para consultar su estado de cuenta, por favor envíe su *RIF* para identificarlo." });
-                    }
+                    if (!targetID) return await safeSendMessage(from, { text: "Por favor envíe su *RIF* para identificarlo." });
                     const facturas = await obtenerDetalleFacturas(targetID);
                     if (facturas.length === 0) return await safeSendMessage(from, { text: "✅ No posee facturas pendientes." });
                     let totalP = 0; let listado = "*📄 FACTURAS PENDIENTES:*\n\n";
                     facturas.forEach(f => {
-                        const monto = (f.total - f.abono_factura) / (f.porcentaje || 1);
-                        totalP += monto;
-                        const fReg = new Date(f.fecha_reg).toISOString().split('T')[0];
-                        const params = `id_factura=${f.id_factura}&nro_factura=${f.nro_factura}&fecha_reg=${fReg}&total=${f.total}&abono_factura=${f.abono_factura}&nombres=${encodeURIComponent(f.nombres.trim())}&nombre=${encodeURIComponent(f.nombre_vendedor.trim())}&direccion=${encodeURIComponent(f.direccion.trim())}&cedula=${f.cedula.trim()}&celular=${encodeURIComponent(f.celular.trim())}&telefono=${encodeURIComponent(f.telefono.trim())}&id_cliente=${f.id_cliente}&zona=${encodeURIComponent(f.zona.trim())}&descuento=${f.descuento}&total_desc=${f.total_desc}`;
-                        listado += `🔸 *#${f.nro_factura}* | $${monto.toFixed(2)}\n📄 PDF: https://one4cars.com/sevencorp/factura_full_reporte_web.php?${params}\n\n`;
+                        const monto = (f.total - f.abono_factura) / (f.porcentaje || 1); totalP += monto;
+                        listado += `🔸 *#${f.nro_factura}* | $${monto.toFixed(2)}\n\n`;
                     });
                     listado += `💰 *TOTAL A PAGAR: $${totalP.toFixed(2)}*`;
                     return await safeSendMessage(from, { text: listado });
                 }
                 return await safeSendMessage(from, { text: menuOption });
             }
-         // ============================================================
-            // NUEVO: LÓGICA DE PAGO / ABONO (COLOCAR AQUÍ)
-            // ============================================================
-            if (text === 'pago fact' || text === 'abono'  || text.includes('pago') || text.includes('al señor oscar') || text.includes('envié el pago') || text.includes('adjunto pago')) {
+
+            if (text.includes('pago') || text.includes('abono') || text.includes('adjunto pago')) {
                 const nombreUsuario = vendedor ? vendedor.nombre : pushName;
-                const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nRecibido tu mensaje, administración validará su pago a la brevedad.\n\n${MENU_TEXT}`;
-                return await safeSendMessage(from, { text: saludoCordial });
+                return await safeSendMessage(from, { text: `¡Hola *${nombreUsuario}*! Recibido, administración validará su pago pronto.\n\n${MENU_TEXT}` });
             }
 
-                     // ============================================================
-            // NUEVO: (Factura Fiscal)
-            // ============================================================
-            if (text === 'pago fact' || text === 'factura fiscal'  || text.includes('factura con iva')  ) {
-                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
-                const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nLa Factura Fiscalk sera realizada de acuerdo con su solicitud el dia que tenga disponibilidad de hacer el pago.\n\n${MENU_TEXT}`;
-                return await safeSendMessage(from, { text: saludoCordial });
-            }
-            // --- 3. LÓGICA DE DESPACHOS Y TIEMPOS ---
-            if (text.includes("cuando llega mi pedido") || 
-                text.includes("tiempo tardan en despachar") || 
-                text.includes("cuando me llega") || 
-                text.includes("tiempo de entrega") || 
-                text.includes("cuanto tarda el envio")) {
-                return await safeSendMessage(from, { text: "Saludos estimado cliente, su pedido esta disponible en un lapso no mayor de 24 horas" });
+            if (text.includes("cuando llega") || text.includes("tiempo de entrega") || text.includes("cuanto tarda")) {
+                return await safeSendMessage(from, { text: "Saludos, su pedido está disponible en un lapso no mayor a 24 horas." });
             }
 
-            // --- 4. LÓGICA DE PRODUCTOS ---
+            // --- 4. LÓGICA DE PRODUCTOS (MODIFICADO PARA MOSTRAR AGOTADOS) ---
             if (text !== 'menu' && !['hola', 'buen dia', 'buenos dias'].includes(text)) {
                 try {
-                    // SE AÑADIÓ LA BÚSQUEDA DIRECTA POR CÓDIGO
                     let prods = await buscarProductoPorCodigo(rawText);
-                    
-                    if (!prods) {
-                        prods = await buscarProductoPorTexto(rawText);
-                    }
-
+                    if (!prods) prods = await buscarProductoPorTexto(rawText);
                     if (prods) {
-                        const saludos = [
-                            "Saludos estimado , gracias por tu consulta puedo recomendarte estos artículos: 👇",
-                            "¡Hola! He buscado en nuestro inventario y creo que estos artículos es lo que buscas: 👇",
-                            "Con gusto le ayudo. Segun lo que me dices, aquí tienes la mejor opcion disponible: 👇",
-                            "Hola, un placer saludarle. He encontrado estos productos que coinciden con su búsqueda: 👇"
-                        ];
-                        const saludoAzar = saludos[Math.floor(Math.random() * saludos.length)];
-                        await safeSendMessage(from, { text: saludoAzar });
-                        await sleep(1500);
-
+                        await safeSendMessage(from, { text: "He consultado nuestro catálogo y esto es lo que encontré: 👇" });
+                        await sleep(1000);
                         for (const p of prods) {
                             if (!isBotReady()) break; 
                             const precioLimpio = parseFloat(p.precio_final || 0).toFixed(2);
-                            const caption = `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio Final: $${precioLimpio}*\n📝 ${p.descripcion}\n🔗 Ficha: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}`;
+                            const stockReal = parseFloat(p.stock_total || 0);
+                            const etiquetaStock = stockReal > 0 ? "✅ *DISPONIBLE*" : "🚫 *AGOTADO (Bajo Pedido)*";
+                            
+                            const caption = `📦 *CÓDIGO: ${p.producto}*\n${etiquetaStock}\n💰 *Precio: $${precioLimpio}*\n📝 ${p.descripcion}\n🔗 Ficha: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}`;
                             const imgUrl = `https://one4cars.com/imagen/${p.producto}.jpg`;
-                            try {
-                                await socketBot.sendMessage(from, { image: { url: imgUrl }, caption: caption });
-                            } catch (imgErr) {
-                                await safeSendMessage(from, { text: caption });
-                            }
+                            try { await socketBot.sendMessage(from, { image: { url: imgUrl }, caption: caption }); } 
+                            catch (imgErr) { await safeSendMessage(from, { text: caption }); }
                             await sleep(1500);
                         }
                         return;
                     }
-                } catch (e) { console.log("Error en flujo de productos:", e); }
+                } catch (e) { console.log("Error productos:", e); }
             }
 
-            // --- 5. COMANDOS DE ADMINISTRADOR ---
-            if (isAdmin) {
-                if (text === 'dolar' || text === 'bcv' || text === 'paralelo' ) {
-                    await actualizarDolar();
-                    return await safeSendMessage(from, { text: `💵 BCV: ${dolarInfo.bcv}\n📈 Paralelo: ${dolarInfo.paralelo}` });
-                }
-                if (text === 'menu' || text === 'hola' || text === 'buen dia') {
-                    return await safeSendMessage(from, { text: `⭐ *MODO ADMINISTRADOR*\n\n${MENU_TEXT}` });
-                }
+            if (isAdmin && (text === 'dolar' || text === 'bcv')) {
+                await actualizarDolar();
+                return await safeSendMessage(from, { text: `💵 BCV: ${dolarInfo.bcv}\n📈 Paralelo: ${dolarInfo.paralelo}` });
             }
 
-            // --- 6. SALUDO Y MENÚ ---
-            if (text === 'menu' || text === 'hola' || text === 'buen dia' || text === 'buenos dias') {
+            if (text === 'menu' || text === 'hola' || text === 'buen dia') {
                 const nombreUsuario = vendedor ? vendedor.nombre : pushName;
-                const saludoCordial = `¡Hola *${nombreUsuario}*! Es un gusto saludarte. 😊\n\n¿En qué podemos ayudarte hoy? Por favor, indícanos qué servicio necesitas o consulta nuestro menú a continuación:\n\n${MENU_TEXT}`;
-                return await safeSendMessage(from, { text: saludoCordial });
+                return await safeSendMessage(from, { text: `¡Hola *${nombreUsuario}*! 😊\n\n¿En qué podemos ayudarte hoy?\n\n${MENU_TEXT}` });
             }
 
-                        // --- 6. SALUDO Y MENÚ ---
-            if (text === 'Pago fact' || text === 'Abono' ) {
-                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
-                const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nrecibido tu mensaje, administracion validara su pago a la brevedad\n\n${MENU_TEXT}`;
-                return await safeSendMessage(from, { text: saludoCordial });
-            }
-            
-            // --- 7. FALLBACK ---
-            const conversationalShorts = ['si', 'no', 'ok', 'vale', 'gracias', 'ya', 'entendido', 'está bien', 'bueno', 'dale', 'está ok', 'está bien', 'claro'];
+            const conversationalShorts = ['si', 'no', 'ok', 'vale', 'gracias', 'ya', 'entendido'];
             if (conversationalShorts.includes(text)) return; 
             if (rawText.length > 500) return;
-
-            await safeSendMessage(from, { text: "Lo siento, no logré entender tu solicitud. 😕 ¿Podrías darme más detalles o escribir *menu* para ver nuestras opciones?" });
-        } catch (e) { console.log("[MSG] Error en handler de mensajes:", e.message); }
+            await safeSendMessage(from, { text: "Lo siento, no logré entender tu solicitud. 😕 Escriba *menu* para ver opciones." });
+        } catch (e) { console.log("[MSG] Error:", e.message); }
     });
 }
 
@@ -771,7 +609,7 @@ async function startBot() {
 const server = http.createServer(async (req, res) => {
     const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const query = Object.fromEntries(parsedUrl.searchParams.entries());
-    const header = `<nav class="navbar navbar-dark bg-dark mb-4 shadow"><div class="container"><a class="navbar-brand fw-bold" href="/">ONE4CARS ADMIN</a></div></nav>`;
+    const header = `<nav class="navbar navbar-dark bg-dark mb-4"><div class="container"><a class="navbar-brand" href="/">ONE4CARS ADMIN</a></div></nav>`;
     const routename = parsedUrl.pathname;
 
     if (routename === '/cobranza') {
@@ -785,14 +623,6 @@ const server = http.createServer(async (req, res) => {
         const c = await marketingModulo.obtenerClientesMarketing(query);
         res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
         res.end(await marketingModulo.generarHTMLMarketing(c, v, z, header, query));
-    } else if (routename === '/marketing-preview') {
-        let sql = "SELECT id_cliente, nombres, celular FROM tab_clientes WHERE celular IS NOT NULL AND celular != ''";
-        const params = [];
-        if (query.vendedor) { sql += " AND vendedor = ?"; params.push(query.vendedor); }
-        if (query.zona) { sql += " AND zona = ?"; params.push(query.zona); }
-        const [clientes] = await pool.execute(sql, params);
-        res.writeHead(200, {'Content-Type': 'application/json'});
-        res.end(JSON.stringify(clientes));
     } else if (routename === '/enviar-marketing' && req.method === 'POST') {
         if (!isBotReady()) return res.end("Bot no listo.");
         let b = ''; req.on('data', c => b += c);
@@ -801,62 +631,24 @@ const server = http.createServer(async (req, res) => {
             for (const id of data.clientes) {
                 const [rows] = await pool.execute("SELECT * FROM tab_clientes WHERE id_cliente=?", [id]);
                 if (rows[0]) {
-                    const c = rows[0];
-                    const jid = formatWhatsApp(c.celular);
+                    const c = rows[0]; const jid = formatWhatsApp(c.celular);
                     try {
-                        if (data.tipo === 'precios') {
-                            await safeSendMessage(jid, { document: { url: PDF_URL_CATALOGO }, fileName: 'Catalogo-ONE4CARS.pdf', mimetype: 'application/pdf', caption: `¡Hola *${c.nombres}*! Catálogo actualizado.` });
-                        } else if (data.tipo === 'promo') {
-                            await safeSendMessage(jid, { text: data.mensaje });
-                        }
+                        if (data.tipo === 'precios') await safeSendMessage(jid, { document: { url: PDF_URL_CATALOGO }, fileName: 'Catalogo.pdf', mimetype: 'application/pdf', caption: `¡Hola *${c.nombres}*! Catálogo.` });
+                        else await safeSendMessage(jid, { text: data.mensaje });
                         await randomDelay();
                     } catch (e) {}
                 }
             }
             res.end("OK");
         });
-    } else if (routename === '/enviar-cobranza' && req.method === 'POST') {
-        if (!isBotReady()) return res.end("Bot no listo.");
-        let b = ''; req.on('data', c => b += c);
-        req.on('end', async () => {
-            const data = JSON.parse(b);
-            for (const id_cliente of data.facturas) {
-                const [facturas] = await pool.execute(
-                    "SELECT f.nro_factura, f.total, f.abono_factura, f.fecha_reg, f.porcentaje, c.nombres, c.celular FROM tab_facturas f JOIN tab_clientes c ON f.id_cliente = c.id_cliente WHERE f.id_cliente = ? AND f.pagada = 'NO' AND f.anulado = 'no'", 
-                    [id_cliente]
-                );
-                for (const f of facturas) {
-                    const jid = formatWhatsApp(f.celular);
-                    const saldoBs = (f.total - f.abono_factura) / (f.porcentaje || 1);
-                    const msg = `Hola *${f.nombres}* 🚗, factura #${f.nro_factura} pendiente.\nSaldo: Bs. *${saldoBs.toLocaleString('es-VE')}*.\nPor favor gestione su pago.`;
-                    await safeSendMessage(jid, { text: msg });
-                    await randomDelay();
-                }
-            }
-            res.end("OK");
-        });
     } else if (routename === '/reset-sesion') {
-        try {
-            if (fs.existsSync('auth_info')) {
-                fs.rmSync('auth_info', { recursive: true, force: true });
-            }
-            res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Sesión borrada</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="5;url=/"> </head><body class="bg-light"><div class="container mt-5 text-center"><div class="card shadow p-5 mx-auto" style="max-width:500px;border-radius:15px;"><h3>✅ Sesión borrada</h3><p class="mt-3">La carpeta <strong>auth_info</strong> se eliminó correctamente.</p><p>El bot mostrará un nuevo código QR en <strong>5 segundos</strong>.</p><a href="/" class="btn btn-primary mt-3">Ir al inicio</a></div></div></body></html>`);
-        } catch (e) { res.end("Error al borrar sesión: " + e.message); }
-    } else if (routename === '/notificador-estado') {
-        const total = await notificador.obtenerFacturasNoNotificadasCount();
-        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Notificador</title></head><body class="bg-light">${header}<div class="container mt-5"><div class="card shadow-lg p-4 mx-auto" style="max-width: 600px; border-radius: 15px;"><h3>📬 Notificador</h3><hr><p>Facturas pendientes: <strong>${total}</strong></p><p>Estado: ${isBotReady() ? '<span class="text-success">🟢 Online</span>' : '<span class="text-danger">🔴 Offline</span>'}</p><a href="/" class="btn btn-outline-secondary mt-3">Volver</a></div></div></body></html>`);
-    } else if (routename === '/recordatorio-estado') {
-        const facturas = await notificador.obtenerFacturasVencidas();
-        const enviados = await notificador.obtenerRecordatoriosEnviados();
-        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Recordatorios</title></head><body class="bg-light">${header}<div class="container mt-5"><div class="card shadow-lg p-4 mx-auto" style="max-width: 800px; border-radius: 15px;"><h3>📅 Recordatorios</h3><hr><table class="table table-sm"><thead><tr><th>Factura</th><th>Cliente</th><th>Días</th><th>Estado</th></tr></thead><tbody>${facturas.map(f => `<tr><td>${f.nro_factura}</td><td>${f.nombres}</td><td>${f.dias_vencida}</td><td>${(enviados[f.id_factura]) ? '✅' : '⏳'}</td></tr>`).join('')}</tbody></table><a href="/" class="btn btn-outline-secondary">Volver</a></div></div></body></html>`);
+        if (fs.existsSync('auth_info')) fs.rmSync('auth_info', { recursive: true, force: true });
+        res.end("Sesión borrada. Reinicie el bot.");
     } else {
-        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="30"><title>Admin ONE4CARS</title></head><body style="background-color: #f4f7f6;">${header}<div class="container text-center"><div class="card shadow-lg p-4 mx-auto" style="max-width: 500px; border-radius: 15px;"><h4 class="mb-3">Estado del Bot</h4><div class="my-4">${qrCodeData.startsWith('data') ? `<img src="${qrCodeData}" class="img-fluid rounded" style="max-width: 250px;">` : `<h2 class="text-success">${qrCodeData}</h2>`}</div><p>BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}</p><div class="d-grid gap-2"><a href="/cobranza" class="btn btn-primary">PANEL DE COBRANZA</a><a href="/marketing-panel" class="btn btn-info text-white">PANEL DE MARKETING</a><a href="/notificador-estado" class="btn btn-secondary text-white">NOTIFICADOR</a><a href="/recordatorio-estado" class="btn btn-warning text-dark">RECORDATORIOS</a></div></div></div></body></html>`);
+        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="30"><title>Admin Bot</title></head><body>${header}<div class="container text-center"><div class="card p-4 mx-auto" style="max-width: 500px;"><h4>Estado del Bot</h4><div class="my-4">${qrCodeData.startsWith('data') ? `<img src="${qrCodeData}" style="max-width: 250px;">` : `<h2 class="text-success">${qrCodeData}</h2>`}</div><div class="d-grid gap-2"><a href="/cobranza" class="btn btn-primary">COBRANZA</a><a href="/marketing-panel" class="btn btn-info text-white">MARKETING</a></div></div></div></body></html>`);
     }
 });
 
 server.listen(PORT, '0.0.0.0', async () => {
-    await initDB();
-    startBot();
-    actualizarDolar();
-    setInterval(actualizarDolar, 3600000);
+    await initDB(); startBot(); actualizarDolar(); setInterval(actualizarDolar, 3600000);
 });
