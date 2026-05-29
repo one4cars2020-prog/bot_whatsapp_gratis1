@@ -286,7 +286,10 @@ async function buscarProductoPorTexto(texto) {
         'estoy', 'estas', 'esta', 'estaba', 'estabas', 'estabamos', 'estaban',
         'vengo', 'vienes', 'viene', 'vienen', 'venia', 'venias', 'veniamos', 'venian',
         'voy', 'vas', 'va', 'vamos', 'van', 'iba', 'ibas', 'ibamos', 'iban',
-        'llegando', 'pais', 'país', 'atento'
+        'llegando', 'pais', 'país', 'atento',
+        // NUEVAS PALABRAS INCLUIDAS PARA EVITAR FALSOS NEGATIVOS EN ROLINERAS Y OTROS RESPUESTOS
+        'enviaras', 'existencia', 'existencias', 'enviar', 'enviame', 'mandame', 'mándame', 
+        'envíame', 'disponibilidad', 'ver', 'buscar', 'repuesto', 'repuestos', 'catalogo', 'catálogo'
     ];
 
     const palabrasBase = txtNormal.split(' ')
@@ -330,7 +333,11 @@ async function buscarProductoPorTexto(texto) {
         console.log("Error Intento 1:", e.message);
     }
 
+    // MEJORA RELEVANCIA DINÁMICA: Si hay muchas palabras, permite coincidir con la gran mayoría sin exigir rigurosamente el 100%
     let minRelevance = palabrasBase.length;
+    if (palabrasBase.length >= 4) {
+        minRelevance = palabrasBase.length - 1;
+    }
 
     const expandedTerms = [...new Set(palabrasBase.flatMap(expandirFormas))];
     const orConditions = expandedTerms.map(() => "descripcion LIKE ?");
@@ -434,7 +441,7 @@ function obtenerTonoMensaje(nivel, f, monto, fecha) {
     if (nivel >= 60) {
         return `🧾 *AVISO DE PAGO PENDIENTE*\n\nHola *${f.nombres}*, la factura *N° ${f.nro_factura}* emitida el *${fecha}* ya superó los 60 días de vencida con un saldo de *$${monto.toFixed(2)}*.\n\nEl retraso en el pago afecta la rotación de nuestros productos y la disponibilidad de inventario para todos nuestros clientes. Le agradecemos realizar el pago a la mayor brevedad posible.\n\nQuedamos a su disposición para cualquier duda o gestión. 🚗`;
     }
-    return `🧾 *RECORDATORIO DE PAGO*\n\nHola *${f.nombres}*, le recordamos amablemente que la factura *N° ${f.nro_factura}* con fecha *${fecha}* presents un saldo pendiente de *$${monto.toFixed(2)}*.\n\nLe agradecemos gestionar el pago para mantener su cuenta al día. Estamos a su disposición para cualquier consulta. 🚗`;
+    return `🧾 *RECORDATORIO DE PAGO*\n\nHola *${f.nombres}*, le recordamos amablemente que la factura *N° ${f.nro_factura}* con fecha *${fecha}* presenta un saldo pendiente de *$${monto.toFixed(2)}*.\n\nLe agradecemos gestionar el pago para mantener su cuenta al día. Estamos a su disposición para cualquier consulta. 🚗`;
 }
 
 async function checkFacturasVencidas() {
@@ -484,28 +491,23 @@ async function checkVendedoresRecordatorio() {
     if (!isBotReady() || vendedorEjecutando) return;
     vendedorEjecutando = true;
     try {
-        const ahora = new Date();
-        const hoy = ahora.getDay();
-        
-        // Condición para pruebas de hoy: Viernes 29 de mayo de 2026
-        const esHoyPrueba = ahora.getFullYear() === 2026 && ahora.getMonth() === 4 && ahora.getDate() === 29;
+        const hoyFecha = new Date();
+        const hoyDiaSemana = hoyFecha.getDay(); // 0 = Domingo, 1 = Lunes, ..., 5 = Viernes
 
-        // A partir de este momento, solo los lunes (1) o si coincide con la fecha de prueba de hoy
-        if (hoy !== 1 && !esHoyPrueba) return;
+        // LÓGICA DE PROGRAMACIÓN: Ejecutar hoy (Viernes 29 de Mayo 2026) obligatoriamente para pruebas, y luego solo los Lunes (1)
+        const esHoyPrueba = (hoyFecha.getFullYear() === 2026 && hoyFecha.getMonth() === 4 && hoyFecha.getDate() === 29);
+        
+        if (hoyDiaSemana !== 1 && !esHoyPrueba) {
+            vendedorEjecutando = false;
+            return;
+        }
 
         const ultimo = await notificador.obtenerUltimoEnvioVendedor();
-        if (ultimo) {
-            const fechaUltimo = new Date(ultimo);
-            if (esHoyPrueba) {
-                // Si es hoy el día de prueba, evitar enviar de nuevo en caso de reinicios múltiples hoy mismo
-                if (fechaUltimo.getFullYear() === 2026 && fechaUltimo.getMonth() === 4 && fechaUltimo.getDate() === 29) {
-                    console.log("[VENDEDORES] Ya se envió el recordatorio de prueba el día de hoy.");
-                    return;
-                }
-            } else {
-                // Validación regular para días lunes
-                const diff = Math.floor((ahora - fechaUltimo) / 86400000);
-                if (diff < 3) return;
+        if (ultimo && !esHoyPrueba) {
+            const diff = Math.floor((new Date() - new Date(ultimo)) / 86400000);
+            if (diff < 3) {
+                vendedorEjecutando = false;
+                return;
             }
         }
 
@@ -585,15 +587,15 @@ async function startBot() {
                 notificadorInterval = setInterval(checkNuevasFacturas, 45000);
                 setInterval(checkFacturasVencidas, 86400000);
                 setInterval(checkVendedoresRecordatorio, 86400000);
+                
+                // LLAMADA INMEDIATA DE PRUEBA: Al conectar, procesará los recordatorios de vendedores tras 5 segundos.
+                setTimeout(() => {
+                    checkVendedoresRecordatorio();
+                }, 5000);
+
                 setInterval(() => {
                     if (!isBotReady() && socketBot) startBot();
                 }, 300000);
-
-                // Ejecuta un chequeo inicial a los 5 segundos de conectar para procesar hoy mismo las alertas sin esperar las 24h de intervalo
-                setTimeout(() => {
-                    checkFacturasVencidas();
-                    checkVendedoresRecordatorio();
-                }, 5000);
             }
         }
         if (connection === 'close') {
@@ -792,7 +794,7 @@ async function startBot() {
     });
 }
 
-// (SERVIDOR HTTP Y RESTO DEL CÓDIGO IDENTICO...)
+// SERVIRDOR HTTP
 const server = http.createServer(async (req, res) => {
     const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const query = Object.fromEntries(parsedUrl.searchParams.entries());
@@ -869,7 +871,27 @@ const server = http.createServer(async (req, res) => {
         } catch (e) { res.end("Error al borrar sesión: " + e.message); }
     } else if (routename === '/notificador-estado') {
         const total = await notificador.obtenerFacturasNoNotificadasCount();
-        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Notificador</title></head><body class="bg-light">${header}<div class="container mt-5"><div class="card shadow-lg p-4 mx-auto" style="max-width: 600px; border-radius: 15px;"><h3>📬 Notificador</h3><hr><p>Facturas pendientes: <strong>${total}</strong></p><p>Estado: ${isBotReady() ? '<span class="text-success">🟢 Online</span>' : '<span class="text-danger">🔴 Offline</span>'}</p><a href="/" class="btn btn-outline-secondary mt-3">Volver</a></div></div></body></html>`);
+        
+        // CÁLCULO DE VENDEDORES CON CUENTAS EXPIRADAS PARA MOSTRAR EN LA INTERFAZ
+        let totalVendedoresPendientes = 0;
+        try {
+            const facturasVencidas = await notificador.obtenerFacturasVencidasAll();
+            const vendedoresPendientesMap = {};
+            for (const f of facturasVencidas) {
+                if (f.dias_vencida >= 30 && f.celular_vendedor) {
+                    let monto = (parseFloat(f.total) - parseFloat(f.abono_factura || 0)) / (parseFloat(f.porcentaje) || 1);
+                    if (monto > 0) {
+                        const key = f.celular_vendedor.toString().replace(/\D/g, '');
+                        vendedoresPendientesMap[key] = true;
+                    }
+                }
+            }
+            totalVendedoresPendientes = Object.keys(vendedoresPendientesMap).length;
+        } catch (err) {
+            console.log("Error al procesar pendientes vendedores del panel:", err.message);
+        }
+
+        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Notificador</title></head><body class="bg-light">${header}<div class="container mt-5"><div class="card shadow-lg p-4 mx-auto" style="max-width: 600px; border-radius: 15px;"><h3>📬 Notificador</h3><hr><p>Facturas pendientes: <strong>${total}</strong></p><p>Notificaciones pendientes a vendedores: <strong>${totalVendedoresPendientes}</strong></p><p>Estado: ${isBotReady() ? '<span class="text-success">🟢 Online</span>' : '<span class="text-danger">🔴 Offline</span>'}</p><a href="/" class="btn btn-outline-secondary mt-3">Volver</a></div></div></body></html>`);
     } else if (routename === '/recordatorio-estado') {
         const facturas = await notificador.obtenerFacturasVencidas();
         const enviados = await notificador.obtenerRecordatoriosEnviados();
