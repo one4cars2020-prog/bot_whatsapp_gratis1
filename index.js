@@ -434,7 +434,7 @@ function obtenerTonoMensaje(nivel, f, monto, fecha) {
     if (nivel >= 60) {
         return `🧾 *AVISO DE PAGO PENDIENTE*\n\nHola *${f.nombres}*, la factura *N° ${f.nro_factura}* emitida el *${fecha}* ya superó los 60 días de vencida con un saldo de *$${monto.toFixed(2)}*.\n\nEl retraso en el pago afecta la rotación de nuestros productos y la disponibilidad de inventario para todos nuestros clientes. Le agradecemos realizar el pago a la mayor brevedad posible.\n\nQuedamos a su disposición para cualquier duda o gestión. 🚗`;
     }
-    return `🧾 *RECORDATORIO DE PAGO*\n\nHola *${f.nombres}*, le recordamos amablemente que la factura *N° ${f.nro_factura}* con fecha *${fecha}* presenta un saldo pendiente de *$${monto.toFixed(2)}*.\n\nLe agradecemos gestionar el pago para mantener su cuenta al día. Estamos a su disposición para cualquier consulta. 🚗`;
+    return `🧾 *RECORDATORIO DE PAGO*\n\nHola *${f.nombres}*, le recordamos amablemente que la factura *N° ${f.nro_factura}* con fecha *${fecha}* presents un saldo pendiente de *$${monto.toFixed(2)}*.\n\nLe agradecemos gestionar el pago para mantener su cuenta al día. Estamos a su disposición para cualquier consulta. 🚗`;
 }
 
 async function checkFacturasVencidas() {
@@ -484,13 +484,29 @@ async function checkVendedoresRecordatorio() {
     if (!isBotReady() || vendedorEjecutando) return;
     vendedorEjecutando = true;
     try {
-        const hoy = new Date().getDay();
-        if (hoy === 0 || hoy === 6) return;
+        const ahora = new Date();
+        const hoy = ahora.getDay();
+        
+        // Condición para pruebas de hoy: Viernes 29 de mayo de 2026
+        const esHoyPrueba = ahora.getFullYear() === 2026 && ahora.getMonth() === 4 && ahora.getDate() === 29;
+
+        // A partir de este momento, solo los lunes (1) o si coincide con la fecha de prueba de hoy
+        if (hoy !== 1 && !esHoyPrueba) return;
 
         const ultimo = await notificador.obtenerUltimoEnvioVendedor();
         if (ultimo) {
-            const diff = Math.floor((new Date() - new Date(ultimo)) / 86400000);
-            if (diff < 3) return;
+            const fechaUltimo = new Date(ultimo);
+            if (esHoyPrueba) {
+                // Si es hoy el día de prueba, evitar enviar de nuevo en caso de reinicios múltiples hoy mismo
+                if (fechaUltimo.getFullYear() === 2026 && fechaUltimo.getMonth() === 4 && fechaUltimo.getDate() === 29) {
+                    console.log("[VENDEDORES] Ya se envió el recordatorio de prueba el día de hoy.");
+                    return;
+                }
+            } else {
+                // Validación regular para días lunes
+                const diff = Math.floor((ahora - fechaUltimo) / 86400000);
+                if (diff < 3) return;
+            }
         }
 
         const facturas = await notificador.obtenerFacturasVencidasAll();
@@ -572,6 +588,12 @@ async function startBot() {
                 setInterval(() => {
                     if (!isBotReady() && socketBot) startBot();
                 }, 300000);
+
+                // Ejecuta un chequeo inicial a los 5 segundos de conectar para procesar hoy mismo las alertas sin esperar las 24h de intervalo
+                setTimeout(() => {
+                    checkFacturasVencidas();
+                    checkVendedoresRecordatorio();
+                }, 5000);
             }
         }
         if (connection === 'close') {
