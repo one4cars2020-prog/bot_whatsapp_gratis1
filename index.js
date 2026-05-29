@@ -552,13 +552,33 @@ async function checkVendedoresRecordatorio(force = false) {
     }
 }
 
-// ===== ENVIO DE ESTADISTICAS A CADA VENDEDOR (AHORA SOLO MANUAL) =====
+// ===== ENVIO DE ESTADISTICAS A CADA VENDEDOR =====
 let estadisticasEjecutando = false;
 
-async function checkEstadisticasVendedores() {
+async function checkEstadisticasVendedores(force = false) {
     if (!isBotReady() || estadisticasEjecutando) return;
     estadisticasEjecutando = true;
     try {
+        const hoyDate = new Date();
+        const hoyDay = hoyDate.getDay(); 
+        
+        // Ejecutar automático los lunes (1), saltar la validación si se fuerza manualmente (force === true)
+        if (!force && hoyDay !== 1) {
+            estadisticasEjecutando = false;
+            return;
+        }
+
+        const hoyStr = hoyDate.toISOString().split('T')[0];
+        
+        // Validar no duplicar envios el mismo día (se omite la validación si se fuerza manual)
+        if (!force) {
+            const [log] = await pool.execute("SELECT id FROM envio_estadisticas_log WHERE fecha_envio = ?", [hoyStr]);
+            if (log.length > 0) {
+                estadisticasEjecutando = false;
+                return;
+            }
+        }
+
         const [vendedores] = await pool.execute("SELECT id_vendedor, nombre, celular_vendedor, meta_ventas FROM tab_vendedores");
 
         for (const v of vendedores) {
@@ -629,7 +649,7 @@ async function checkEstadisticasVendedores() {
                 });
             }
 
-            // Mensaje de motivación
+            // Mensaje de motivación enfocado en transformar visitas en ventas reales
             const mensajeMotivacional = `💡 *REFLEXIÓN DE ÉXITO SEMANAL:*\nRecuerda que las únicas limitaciones verdaderas son las que tú permites que vivan en tu mente. No existen mercados difíciles ni metas inalcanzables cuando vas con determinación. Esta semana, haz que cada visita cuente: no salgas solo a saludar, sal con la convicción de conectar y transformar cada oportunidad en una venta cerrada. ¡Rompe tus propios récords y demuestra tu verdadero potencial! 💪🚀`;
 
             const msgEstadisticas = `📊 *REPORTE DE ESTADÍSTICAS DE VENTAS*\n\n` +
@@ -646,7 +666,12 @@ async function checkEstadisticasVendedores() {
             await sleep(1500); // Pausa para evitar bloqueos del socket
         }
 
-        console.log(`[ESTADISTICAS] Reportes individuales enviados correctamente (MODO MANUAL).`);
+        // Si es automático, registramos el envío para que no se repita en el día
+        if (!force) {
+            await pool.execute("INSERT INTO envio_estadisticas_log (fecha_envio) VALUES (?)", [hoyStr]);
+        }
+        
+        console.log(`[ESTADISTICAS] Reportes individuales enviados correctamente.`);
     } catch (e) {
         console.log("[ESTADISTICAS] Error general:", e.message);
     } finally {
@@ -688,7 +713,9 @@ async function startBot() {
                 notificadorInterval = setInterval(checkNuevasFacturas, 45000);
                 setInterval(checkFacturasVencidas, 86400000);
                 setInterval(checkVendedoresRecordatorio, 86400000);
-                // Se removió el setInterval de checkEstadisticasVendedores
+                
+                // Temporizador automático de Estadísticas activado (revisa cada 30 min)
+                setInterval(checkEstadisticasVendedores, 1800000);
                 
                 setInterval(() => {
                     if (!isBotReady() && socketBot) startBot();
@@ -976,8 +1003,8 @@ const server = http.createServer(async (req, res) => {
 
         if (query.action === 'force_stats') {
             if (isBotReady()) {
-                // Al presionar el botón se llama a la función de estadísticas para que envíe inmediatamente
-                checkEstadisticasVendedores().catch(e => console.log(e));
+                // AQUÍ PASAMOS TRUE PARA FORZAR EL ENVÍO INMEDIATO
+                checkEstadisticasVendedores(true).catch(e => console.log(e));
             }
             res.writeHead(302, { 'Location': '/notificador-estado' });
             return res.end();
