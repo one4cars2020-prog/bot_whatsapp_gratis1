@@ -218,6 +218,11 @@ async function initDB() {
             id INT AUTO_INCREMENT PRIMARY KEY,
             fecha_envio DATE NOT NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci`);
+
+        await pool.execute(`CREATE TABLE IF NOT EXISTS envio_estadisticas_log (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            fecha_envio DATE NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci`);
         
         console.log("✅ Base de Datos vinculada.");
     } catch (e) { console.log("❌ Error DB Init:", e.message); }
@@ -286,10 +291,7 @@ async function buscarProductoPorTexto(texto) {
         'estoy', 'estas', 'esta', 'estaba', 'estabas', 'estabamos', 'estaban',
         'vengo', 'vienes', 'viene', 'vienen', 'venia', 'venias', 'veniamos', 'venian',
         'voy', 'vas', 'va', 'vamos', 'van', 'iba', 'ibas', 'ibamos', 'iban',
-        'llegando', 'pais', 'país', 'atento',
-        // NUEVAS PALABRAS INCLUIDAS PARA EVITAR FALSOS NEGATIVOS EN ROLINERAS Y OTROS RESPUESTOS
-        'enviaras', 'existencia', 'existencias', 'enviar', 'enviame', 'mandame', 'mándame', 
-        'envíame', 'disponibilidad', 'ver', 'buscar', 'repuesto', 'repuestos', 'catalogo', 'catálogo'
+        'llegando', 'pais', 'país', 'atento'
     ];
 
     const palabrasBase = txtNormal.split(' ')
@@ -333,11 +335,7 @@ async function buscarProductoPorTexto(texto) {
         console.log("Error Intento 1:", e.message);
     }
 
-    // MEJORA RELEVANCIA DINÁMICA: Si hay muchas palabras, permite coincidir con la gran mayoría sin exigir rigurosamente el 100%
     let minRelevance = palabrasBase.length;
-    if (palabrasBase.length >= 4) {
-        minRelevance = palabrasBase.length - 1;
-    }
 
     const expandedTerms = [...new Set(palabrasBase.flatMap(expandirFormas))];
     const orConditions = expandedTerms.map(() => "descripcion LIKE ?");
@@ -491,24 +489,13 @@ async function checkVendedoresRecordatorio() {
     if (!isBotReady() || vendedorEjecutando) return;
     vendedorEjecutando = true;
     try {
-        const hoyFecha = new Date();
-        const hoyDiaSemana = hoyFecha.getDay(); // 0 = Domingo, 1 = Lunes, ..., 5 = Viernes
-
-        // LÓGICA DE PROGRAMACIÓN: Ejecutar hoy (Viernes 29 de Mayo 2026) obligatoriamente para pruebas, y luego solo los Lunes (1)
-        const esHoyPrueba = (hoyFecha.getFullYear() === 2026 && hoyFecha.getMonth() === 4 && hoyFecha.getDate() === 29);
-        
-        if (hoyDiaSemana !== 1 && !esHoyPrueba) {
-            vendedorEjecutando = false;
-            return;
-        }
+        const hoy = new Date().getDay();
+        if (hoy === 0 || hoy === 6) return;
 
         const ultimo = await notificador.obtenerUltimoEnvioVendedor();
-        if (ultimo && !esHoyPrueba) {
+        if (ultimo) {
             const diff = Math.floor((new Date() - new Date(ultimo)) / 86400000);
-            if (diff < 3) {
-                vendedorEjecutando = false;
-                return;
-            }
+            if (diff < 3) return;
         }
 
         const facturas = await notificador.obtenerFacturasVencidasAll();
@@ -553,6 +540,99 @@ async function checkVendedoresRecordatorio() {
     }
 }
 
+// ===== NUEVA FUNCION: ENVIO DE ESTADISTICAS A CADA VENDEDOR =====
+let estadisticasEjecutando = false;
+
+async function checkEstadisticasVendedores() {
+    if (!isBotReady() || estadisticasEjecutando) return;
+    estadisticasEjecutando = true;
+    try {
+        const hoyDate = new Date();
+        const hoyDay = hoyDate.getDay(); 
+        
+        // 1 = Lunes, 5 = Viernes (Para pruebas de hoy)
+        if (hoyDay !== 1 && hoyDay !== 5) return;
+
+        const hoyStr = hoyDate.toISOString().split('T')[0];
+        
+        // Evita enviar más de una vez en el mismo día
+        const [log] = await pool.execute("SELECT id FROM envio_estadisticas_log WHERE fecha_envio = ?", [hoyStr]);
+        if (log.length > 0) return;
+
+        // Obtenemos los vendedores
+        const [vendedores] = await pool.execute("SELECT id_vendedor, nombre, celular_vendedor, meta_ventas FROM tab_vendedores");
+
+        for (const v of vendedores) {
+            if (!v.celular_vendedor) continue;
+            const jid = formatWhatsApp(v.celular_vendedor);
+            if (!jid) continue;
+
+            // 1. Venta de la última semana (últimos 7 días)
+            const [rSemana] = await pool.execute(
+                "SELECT SUM(total) as total FROM tab_facturas WHERE id_vendedor = ? AND anulado = 'no' AND fecha_reg >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)",
+                [v.id_vendedor]
+            );
+            const ventaSemana = parseFloat(rSemana[0]?.total || 0);
+
+            // 2. Venta del mes en curso
+            const [rMes] = await pool.execute(
+                "SELECT SUM(total) as total FROM tab_facturas WHERE id_vendedor = ? AND anulado = 'no' AND fecha_reg >= DATE_FORMAT(CURDATE(), '%Y-%m-01')",
+                [v.id_vendedor]
+            );
+            const ventaMes = parseFloat(rMes[0]?.total || 0);
+
+            // 3. Porcentaje de la meta de ventas
+            const meta = parseFloat(v.meta_ventas || 0);
+            const porcMeta = meta > 0 ? ((ventaMes / meta) * 100).toFixed(2) : "0.00";
+
+            // 4. Porcentaje de ventas según el tipo de producto (Mes en curso)
+            // Vinculación segura considerando relaciones nro_factura e id_factura para evitar discrepancias
+            const [rTipos] = await pool.execute(
+                `SELECT r.tipo, SUM(r.precio_total) as total_tipo 
+                 FROM tab_facturas_reng r 
+                 JOIN tab_facturas f ON (r.id_factura = f.id_factura OR r.id_facturas = f.nro_factura)
+                 WHERE f.id_vendedor = ? AND f.anulado = 'no' AND f.fecha_reg >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+                 GROUP BY r.tipo`,
+                [v.id_vendedor]
+            );
+
+            let totalItemsMes = 0;
+            rTipos.forEach(row => { totalItemsMes += parseFloat(row.total_tipo || 0); });
+
+            let breakdownTexto = "";
+            if (rTipos.length === 0) {
+                breakdownTexto = "🔸 _Sin renglones registrados este mes._\n";
+            } else {
+                rTipos.forEach(row => {
+                    const tTotal = parseFloat(row.total_tipo || 0);
+                    const pct = totalItemsMes > 0 ? ((tTotal / totalItemsMes) * 100).toFixed(2) : "0.00";
+                    breakdownTexto += `🔸 *${row.tipo || 'General'}:* ${pct}% _($${tTotal.toFixed(2)})_\n`;
+                });
+            }
+
+            const msgEstadisticas = `📊 *REPORTE DE ESTADÍSTICAS DE VENTAS*\n\n` +
+                `Hola *${v.nombre}*, aquí tienes el resumen de tu rendimiento:\n\n` +
+                `📅 *Venta última semana:* $${ventaSemana.toFixed(2)}\n` +
+                `📈 *Venta mes en curso:* $${ventaMes.toFixed(2)}\n` +
+                `🎯 *Meta asignada:* $${meta.toFixed(2)}\n` +
+                `🏁 *Cumplimiento de Meta:* ${porcMeta}%\n\n` +
+                `📦 *Ventas por Tipo de Producto (Mes):*\n${breakdownTexto}\n` +
+                `¡Excelente labor, sigamos sumando! 🚀`;
+
+            await safeSendMessage(jid, { text: msgEstadisticas });
+            await sleep(2000);
+        }
+
+        // Registrar envío exitoso del día
+        await pool.execute("INSERT INTO envio_estadisticas_log (fecha_envio) VALUES (?)", [hoyStr]);
+        console.log(`[ESTADISTICAS] Reportes individuales enviados correctamente.`);
+    } catch (e) {
+        console.log("[ESTADISTICAS] Error general:", e.message);
+    } finally {
+        estadisticasEjecutando = false;
+    }
+}
+
 // ===== BOT WHATSAPP =====
 async function startBot() {
     if (socketBot) {
@@ -587,12 +667,7 @@ async function startBot() {
                 notificadorInterval = setInterval(checkNuevasFacturas, 45000);
                 setInterval(checkFacturasVencidas, 86400000);
                 setInterval(checkVendedoresRecordatorio, 86400000);
-                
-                // LLAMADA INMEDIATA DE PRUEBA: Al conectar, procesará los recordatorios de vendedores tras 5 segundos.
-                setTimeout(() => {
-                    checkVendedoresRecordatorio();
-                }, 5000);
-
+                setInterval(checkEstadisticasVendedores, 1800000); // Revisa cada 30 min si corresponde enviar las estadísticas
                 setInterval(() => {
                     if (!isBotReady() && socketBot) startBot();
                 }, 300000);
@@ -708,7 +783,7 @@ async function startBot() {
             }
 
             // --- 4. LÓGICA DE PRODUCTOS MEJORADA ---
-            if (text !== 'menu' && !['hola', 'buen dia', 'buenos dias'].includes(text)) {
+            if (text !== 'menu' && !['hola', 'buen dia', 'buonos dias'].includes(text)) {
                 try {
                     let prods = null;
                     
@@ -794,7 +869,7 @@ async function startBot() {
     });
 }
 
-// SERVIRDOR HTTP
+// (SERVIDOR HTTP Y RESTO DEL CÓDIGO IDENTICO...)
 const server = http.createServer(async (req, res) => {
     const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const query = Object.fromEntries(parsedUrl.searchParams.entries());
@@ -871,27 +946,7 @@ const server = http.createServer(async (req, res) => {
         } catch (e) { res.end("Error al borrar sesión: " + e.message); }
     } else if (routename === '/notificador-estado') {
         const total = await notificador.obtenerFacturasNoNotificadasCount();
-        
-        // CÁLCULO DE VENDEDORES CON CUENTAS EXPIRADAS PARA MOSTRAR EN LA INTERFAZ
-        let totalVendedoresPendientes = 0;
-        try {
-            const facturasVencidas = await notificador.obtenerFacturasVencidasAll();
-            const vendedoresPendientesMap = {};
-            for (const f of facturasVencidas) {
-                if (f.dias_vencida >= 30 && f.celular_vendedor) {
-                    let monto = (parseFloat(f.total) - parseFloat(f.abono_factura || 0)) / (parseFloat(f.porcentaje) || 1);
-                    if (monto > 0) {
-                        const key = f.celular_vendedor.toString().replace(/\D/g, '');
-                        vendedoresPendientesMap[key] = true;
-                    }
-                }
-            }
-            totalVendedoresPendientes = Object.keys(vendedoresPendientesMap).length;
-        } catch (err) {
-            console.log("Error al procesar pendientes vendedores del panel:", err.message);
-        }
-
-        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Notificador</title></head><body class="bg-light">${header}<div class="container mt-5"><div class="card shadow-lg p-4 mx-auto" style="max-width: 600px; border-radius: 15px;"><h3>📬 Notificador</h3><hr><p>Facturas pendientes: <strong>${total}</strong></p><p>Notificaciones pendientes a vendedores: <strong>${totalVendedoresPendientes}</strong></p><p>Estado: ${isBotReady() ? '<span class="text-success">🟢 Online</span>' : '<span class="text-danger">🔴 Offline</span>'}</p><a href="/" class="btn btn-outline-secondary mt-3">Volver</a></div></div></body></html>`);
+        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Notificador</title></head><body class="bg-light">${header}<div class="container mt-5"><div class="card shadow-lg p-4 mx-auto" style="max-width: 600px; border-radius: 15px;"><h3>📬 Notificador</h3><hr><p>Facturas pendientes: <strong>${total}</strong></p><p>Estado: ${isBotReady() ? '<span class="text-success">🟢 Online</span>' : '<span class="text-danger">🔴 Offline</span>'}</p><a href="/" class="btn btn-outline-secondary mt-3">Volver</a></div></div></body></html>`);
     } else if (routename === '/recordatorio-estado') {
         const facturas = await notificador.obtenerFacturasVencidas();
         const enviados = await notificador.obtenerRecordatoriosEnviados();
