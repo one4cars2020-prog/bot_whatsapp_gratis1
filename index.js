@@ -486,36 +486,25 @@ async function checkFacturasVencidas() {
 }
 
 // ===== RECORDATORIO A VENDEDORES (COBRANZAS) =====
-// ===== RECORDATORIO A VENDEDORES (COBRANZAS) =====
 let vendedorEjecutando = false;
 
 async function checkVendedoresRecordatorio(force = false) {
-    if (!isBotReady()) {
-        console.log("[ERROR] Bot no está listo para enviar recordatorios a vendedores.");
-        return;
-    }
-    if (vendedorEjecutando && !force) return;
-    
+    if (!isBotReady() || vendedorEjecutando) return;
     vendedorEjecutando = true;
-    console.log(`[VENDEDORES] Iniciando proceso de envío (Force: ${force})...`);
-
     try {
         const hoy = new Date().getDay();
-        // Solo aplicar restricciones si NO es forzado
-        if (!force) {
-            if (hoy === 0 || hoy === 6) {
-                console.log("[VENDEDORES] Saltando: Es fin de semana.");
+        
+        if (!force && (hoy === 0 || hoy === 6)) {
+            vendedorEjecutando = false;
+            return;
+        }
+
+        const ultimo = await notificador.obtenerUltimoEnvioVendedor();
+        if (!force && ultimo) {
+            const diff = Math.floor((new Date() - new Date(ultimo)) / 86400000);
+            if (diff < 3) {
                 vendedorEjecutando = false;
                 return;
-            }
-            const ultimo = await notificador.obtenerUltimoEnvioVendedor();
-            if (ultimo) {
-                const diff = Math.floor((new Date() - new Date(ultimo)) / 86400000);
-                if (diff < 3) {
-                    console.log("[VENDEDORES] Saltando: No han pasado 3 días desde el último envío.");
-                    vendedorEjecutando = false;
-                    return;
-                }
             }
         }
 
@@ -535,29 +524,29 @@ async function checkVendedoresRecordatorio(force = false) {
 
             const key = f.celular_vendedor.toString().replace(/\D/g, '');
             if (!vendedoresMap[key]) {
-                vendedoresMap[key] = { 
-                    nombre: f.vendedor_nombre || 'Vendedor', 
-                    jid: formatWhatsApp(f.celular_vendedor), 
-                    facturas: [] 
+                vendedoresMap[key] = {
+                    nombre: f.vendedor_nombre || 'Vendedor',
+                    jid: formatWhatsApp(f.celular_vendedor),
+                    facturas: []
                 };
             }
-            vendedoresMap[key].facturas.push(f);
+            vendedoresMap[key].facturas.push(`🔹 *N° ${f.nro_factura}* - ${f.nombres} - $${monto.toFixed(2)} (${dias} días)`);
         }
 
-        for (const key in vendedoresMap) {
+        for (const key of Object.keys(vendedoresMap)) {
             const v = vendedoresMap[key];
-            const msg = `📢 *REPORTE DE COBRANZAS* (${v.nombre})\n\nEstimado, tiene clientes con facturas vencidas:\n\n` + 
-                        v.facturas.map(f => `🔹 ${f.nombres}: ${f.nro_factura} ($${(parseFloat(f.total)-parseFloat(f.abono_factura||0)).toFixed(2)})`).join('\n');
-            
+            if (!v.jid || v.facturas.length === 0) continue;
+            const msg = `📢 *RESUMEN DE CLIENTES VENCIDOS*\n\nVendedor: *${v.nombre}*\n\n${v.facturas.join('\n')}\n\nLe recordamos la importancia de gestionar estos cobros para mantener la rotación de productos.`;
             await safeSendMessage(v.jid, { text: msg });
-            await sleep(2000);
+            await sleep(1500);
         }
 
-        await pool.execute("INSERT INTO envio_vendedor_log (fecha_envio) VALUES (CURDATE())");
-        console.log("[VENDEDORES] Proceso finalizado exitosamente.");
-
+        if (!force) {
+            await notificador.marcarEnvioVendedor();
+        }
+        console.log(`[VENDEDORES] ${Object.keys(vendedoresMap).length} vendedor(es) notificado(s) por cobranzas.`);
     } catch (e) {
-        console.error("[VENDEDORES] Error fatal en el proceso:", e.message);
+        console.log("[VENDEDORES] Error:", e.message);
     } finally {
         vendedorEjecutando = false;
     }
@@ -847,7 +836,7 @@ async function startBot() {
                 try {
                     let prods = null;
                     
-                    const palabrasEnMensaje = rawText.split(/\s+/);
+                    const palabras EnMensaje = rawText.split(/\s+/);
                     for (const p of palabrasEnMensaje) {
                         const codCandidato = p.replace(/[^a-zA-Z0-9]/g, ''); 
                         if (codCandidato.length >= 4) { 
