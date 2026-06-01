@@ -162,10 +162,10 @@ async function setModo(tel, modo) {
 }
 
 async function buscarVendedor(jid, pushName) {
-    const telLimpio = jid.split('@')[0]; 
+    const telLimpio = jid.split('@')[0].replace(/\D/g, ''); 
     const [r] = await pool.execute(
-        "SELECT * FROM tab_vendedores WHERE celular_vendedor LIKE ? OR telefono_vendedor LIKE ? OR nombre LIKE ? LIMIT 1", 
-        [`%${telLimpio}%`, `%${telLimpio}%`, `%${pushName}%`]
+        "SELECT * FROM tab_vendedores WHERE REPLACE(REPLACE(celular_vendedor, ' ', ''), '+', '') LIKE ? OR REPLACE(REPLACE(telefono_vendedor, ' ', ''), '+', '') LIKE ? LIMIT 1", 
+        [`%${telLimpio}%`, `%${telLimpio}%`]
     );
     return r[0] || null;
 }
