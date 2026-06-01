@@ -989,16 +989,21 @@ async function startBot() {
             }
 
             // --- 6. SALUDO Y MENÚ ---
-            const greetingWords = ['menu', 'hola', 'buen dia', 'buenos dias', 'buenas tardes', 'buenas noches', 'buendia', 'buenosdias', 'buenastardes', 'buenasnoches'];
-            if (greetingWords.includes(text)) {
-                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
-                const saludos = [
-                    `¡Buenos días, *${nombreUsuario}*! Dios le bendiga. Es un gusto tenerle por aquí. 🙏\n\n¿En qué podemos servirle el día de hoy? Aquí le ayudamos con mucho gusto.\n\n${MENU_TEXT}`,
-                    `¡Buenas tardes, *${nombreUsuario}*! Un placer saludarle. Que tenga una bendecida tarde. 😊\n\n¿Cómo podemos ayudarle? Quedamos atentos a su solicitud.\n\n${MENU_TEXT}`,
-                    `¡Hola *${nombreUsuario}*! Es un gusto saludarle. Dios le bendiga. 🙌\n\n¿En qué podemos ayudarle hoy? Indíquenos qué servicio necesita o consulte nuestro menú:\n\n${MENU_TEXT}`
-                ];
-                const saludo = saludos[Math.floor(Math.random() * saludos.length)];
-                return await safeSendMessage(from, { text: saludo });
+            const nombreUsuario = vendedor ? vendedor.nombre : pushName;
+            const diaWords = ['buen dia', 'buenos dias', 'buendia', 'buenosdias'];
+            const tardeWords = ['buenas tardes', 'buenastardes'];
+            const nocheWords = ['buenas noches', 'buenasnoches'];
+            if (text === 'menu') {
+                return await safeSendMessage(from, { text: `¡Hola *${nombreUsuario}*! Es un gusto saludarle. 🙌\n\n¿En qué podemos ayudarle hoy? Indíquenos qué servicio necesita o consulte nuestro menú:\n\n${MENU_TEXT}` });
+            }
+            if (text === 'hola' || diaWords.includes(text)) {
+                return await safeSendMessage(from, { text: `¡Buenos días, *${nombreUsuario}*! Dios le bendiga. Es un gusto tenerle por aquí. 🙏\n\n¿En qué podemos servirle el día de hoy? Aquí le ayudamos con mucho gusto.\n\n${MENU_TEXT}` });
+            }
+            if (tardeWords.includes(text)) {
+                return await safeSendMessage(from, { text: `¡Buenas tardes, *${nombreUsuario}*! Un placer saludarle. Que tenga una bendecida tarde. 😊\n\n¿Cómo podemos ayudarle? Quedamos atentos a su solicitud.\n\n${MENU_TEXT}` });
+            }
+            if (nocheWords.includes(text)) {
+                return await safeSendMessage(from, { text: `¡Buenas noches, *${nombreUsuario}*! Dios le bendiga. Que descanse. 🌙\n\n¿En qué podemos ayudarle? Quedamos a la orden.\n\n${MENU_TEXT}` });
             }
             
             // --- 7. AGRADECIMIENTO ---
