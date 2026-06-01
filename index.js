@@ -999,7 +999,7 @@ async function startBot() {
             if (conversationalShorts.includes(text)) return; 
             if (rawText.length > 500) return;
 
-            await safeSendMessage(from, { text: "Lo siento, no logré entender tu solicitud. 😕 ¿Podrías darme más detalles o escribir *menu* para ver nuestras opciones?" });
+            await safeSendMessage(from, { text: "" });
         } catch (e) { console.log("[MSG] Error en handler de mensajes:", e.message); }
     });
 }
