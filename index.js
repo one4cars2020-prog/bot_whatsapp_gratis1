@@ -482,6 +482,9 @@ async function checkFacturasVencidas() {
             if (!nivel) continue;
 
             const monto = (parseFloat(f.total) - parseFloat(f.abono_factura || 0)) / (parseFloat(f.porcentaje) || 1);
+            if (f.vendedor_nombre && f.vendedor_nombre.toUpperCase() === 'MANUEL FERRAZ') {
+                monto = monto / 0.80;
+            }
             if (monto <= 0) continue;
 
             const fecha = new Date(f.fecha_reg).toISOString().split('T')[0];
@@ -542,7 +545,7 @@ async function checkVendedoresRecordatorio(force = false) {
             if (monto <= 0 || !f.celular_vendedor) continue;
 
             if (f.vendedor_nombre && f.vendedor_nombre.toUpperCase() === 'MANUEL FERRAZ') {
-                monto = monto / 0.80/parseFloat(f.porcentaje);
+                monto = monto / 0.80;
             }
 
             const key = f.celular_vendedor.toString().replace(/\D/g, '');
