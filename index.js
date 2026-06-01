@@ -261,7 +261,16 @@ async function buscarProductoPorCodigo(codigo) {
 }
 
 async function buscarProductoPorTexto(texto) {
-    const txtNormal = normalizar(texto);
+    // === REEMPLAZO DE MODELOS ESPECÍFICOS SOLICITADOS ===
+    let textoBuscado = texto;
+    textoBuscado = textoBuscado.replace(/ECOSPORT/gi, "ECO EXPORT");
+    textoBuscado = textoBuscado.replace(/GRANCHEROKEE|GRANDCHEROKEE/gi, "GRAND CHEROKEE");
+    textoBuscado = textoBuscado.replace(/GRANBLAZER|GRANDVLAZER/gi, "GRAND BLAZER");
+    textoBuscado = textoBuscado.replace(/GRANVITARA|GRANDVITARA/gi, "GRAND VITARA");
+    
+    const txtNormal = normalizar(textoBuscado);
+    // ====================================================
+
     const stopWords = [
         'tienes', 'la', 'del', 'quiere', 'saber', 'cuanto', 'mide', 'venden', 'donde',
         'precio', 'tienen', 'el', 'una', 'un', 'hay', 'si', 'es', 'de', 'con', 'para',
