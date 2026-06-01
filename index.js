@@ -260,6 +260,20 @@ async function buscarProductoPorCodigo(codigo) {
     return null;
 }
 
+async function obtenerTop10() {
+    try {
+        const sql = `SELECT r.producto, p.descripcion, p.precio_final, SUM(r.cantidad) as total_vendido FROM tab_facturas_reng r JOIN tab_facturas f ON f.nro_factura = r.id_factura JOIN tab_productos p ON p.producto = r.producto WHERE f.fecha_reg >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND f.anulado = 'no' GROUP BY r.producto ORDER BY total_vendido DESC LIMIT 10`;
+        const [rows] = await pool.execute(sql);
+        if (rows.length > 0) return rows;
+    } catch (e) { console.log("Error Top10 id_factura:", e.message); }
+    try {
+        const sql = `SELECT r.producto, p.descripcion, p.precio_final, SUM(r.cantidad) as total_vendido FROM tab_facturas_reng r JOIN tab_facturas f ON f.nro_factura = r.id_facturas JOIN tab_productos p ON p.producto = r.producto WHERE f.fecha_reg >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND f.anulado = 'no' GROUP BY r.producto ORDER BY total_vendido DESC LIMIT 10`;
+        const [rows] = await pool.execute(sql);
+        if (rows.length > 0) return rows;
+    } catch (e) { console.log("Error Top10 id_facturas:", e.message); }
+    return null;
+}
+
 async function buscarProductoPorTexto(texto) {
     // === REEMPLAZO DE MODELOS ESPECÍFICOS SOLICITADOS ===
     let textoBuscado = texto;
@@ -923,13 +937,19 @@ async function startBot() {
             // --- 4. COTIZACIÓN AUTOMÁTICA (MULTILÍNEA) ---
             const lineas = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
             const itemsPedido = [];
-            const regexLinea = /^\s*([A-Za-z0-9]{4,})\s*-?\s*(\d+)\s*$/;
             for (const linea of lineas) {
-                const match = linea.match(regexLinea);
-                if (match) itemsPedido.push({ codigo: match[1].toUpperCase(), cantidad: parseInt(match[2]) });
+                let match = linea.match(/^\s*([A-Za-z0-9]{4,})\s*[-=]?\s*(\d{1,4})\s*$/);
+                if (match) {
+                    itemsPedido.push({ codigo: match[1].toUpperCase(), cantidad: parseInt(match[2]) });
+                    continue;
+                }
+                match = linea.match(/^\s*(\d{1,4})\s*[-=]?\s*([A-Za-z0-9]{4,})\s*$/);
+                if (match) {
+                    itemsPedido.push({ codigo: match[2].toUpperCase(), cantidad: parseInt(match[1]) });
+                }
             }
             if (itemsPedido.length >= 2) {
-                let header = `📋 *COTIZACIÓN DE LOS PRODUCTOS QUE HAY DISPONIBLES*\n`;
+                let header = `📋 *COTIZACIÓN*\n`;
                 if (vendedor) header += `👤 Vendedor: *${vendedor.nombre}*\n`;
                 header += `┌──────────┬────────────────────────────────┬──────┬────────┬────────┐\n`;
                 header += `│ Código   │ Descripción                    │ Cant │ Precio │ Total  │\n`;
@@ -1040,6 +1060,20 @@ async function startBot() {
                     await actualizarDolar();
                     return await safeSendMessage(from, { text: `💵 BCV: ${dolarInfo.bcv}\n📈 Paralelo: ${dolarInfo.paralelo}` });
                 }
+            }
+
+            // --- TOP 10 MÁS VENDIDOS ---
+            if (text === 'top10' || text === 'top 10' || text === 'mas vendidos' || text === 'top10productos' || text === 'top') {
+                const top10 = await obtenerTop10();
+                if (!top10 || top10.length === 0) {
+                    return await safeSendMessage(from, { text: "No hay datos de ventas este mes aún." });
+                }
+                let msg = `🏆 *TOP 10 MÁS VENDIDOS (MES)*\n\n`;
+                top10.forEach((p, i) => {
+                    msg += `${i + 1}. *${p.producto}* - ${p.descripcion}\n`;
+                    msg += `   ${p.total_vendido} und | $${parseFloat(p.precio_final || 0).toFixed(2)} c/u\n`;
+                });
+                return await safeSendMessage(from, { text: msg });
             }
 
             // --- 7. SALUDO Y MENÚ ---
