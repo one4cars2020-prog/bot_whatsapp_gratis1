@@ -528,7 +528,7 @@ async function checkVendedoresRecordatorio(force = false) {
             if (monto <= 0 || !f.celular_vendedor) continue;
 
             if (f.vendedor_nombre && f.vendedor_nombre.toUpperCase() === 'MANUEL FERRAZ') {
-                monto = monto / 0.80;
+                monto = monto / 0.80/parseFloat(f.porcentaje);
             }
 
             const key = f.celular_vendedor.toString().replace(/\D/g, '');
