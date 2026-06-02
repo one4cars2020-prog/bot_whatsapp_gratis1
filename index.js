@@ -4,10 +4,8 @@ const qrcode = require('qrcode');
 const http = require('http');
 const pino = require('pino');
 const fs = require('fs');
-const path = require('path');
 const mysql = require('mysql2/promise');
 const axios = require('axios');
-const PDFDocument = (() => { try { return require('pdfkit'); } catch(e) { return null; } })();
 
 // CAPTURA GLOBAL DE ERRORES EVITA QUE EL BOT MUERA
 process.on('unhandledRejection', (err) => {
@@ -102,7 +100,6 @@ let qrCodeData = "Iniciando...";
 let socketBot = null;
 let dolarInfo = { bcv: 'Cargando...', paralelo: 'Cargando...' };
 let notificadorInterval = null;
-const pendientesConfirmacion = new Map();
 
 // ===== FUNCIONES DE APOYO =====
 
@@ -809,85 +806,6 @@ async function startBot() {
         socketBot = null;
     }
 
-    const logoPaths = [path.join(__dirname, 'imagen', 'brand_logo.jpg'), path.join(__dirname, 'brand_logo.jpg'), path.join(__dirname, '..', 'imagen', 'brand_logo.jpg')];
-
-    async function generarPDFCotizacion(items, vendedor, errores) {
-        return new Promise((resolve) => {
-            try {
-                const doc = new PDFDocument({ margin: 30, size: 'A4' });
-                const buffers = [];
-                doc.on('data', b => buffers.push(b));
-                doc.on('end', () => resolve(Buffer.concat(buffers)));
-                
-                let logoOk = false;
-                for (const lp of logoPaths) {
-                    if (fs.existsSync(lp)) { try { doc.image(lp, 30, 20, { width: 110 }); logoOk = true; } catch(e){} break; }
-                }
-                if (!logoOk) {
-                    doc.fontSize(16).font('Helvetica-Bold').fillColor('#1a73e8').text('ONE4CARS', 30, 30);
-                }
-
-                doc.fillColor('#000');
-                doc.fontSize(18).font('Helvetica-Bold').text('COTIZACIÓN', { align: 'center' });
-                doc.moveDown(0.3);
-                if (vendedor) doc.fontSize(10).font('Helvetica').text(`Vendedor: ${vendedor.nombre}`, { align: 'center' });
-                doc.moveDown(0.5);
-                
-                const colW = [55, 140, 35, 55, 55];
-                const startX = 30;
-                let y = doc.y + 5;
-                const lineH = 14;
-
-                doc.fontSize(7).font('Helvetica-Bold').fillColor('#333');
-                let x = startX;
-                ['Código', 'Tipo', 'Cant', 'Precio', 'Total'].forEach((h, i) => { doc.text(h, x, y, { width: colW[i] }); x += colW[i]; });
-                y += lineH;
-                doc.fillColor('#ccc').rect(startX, y - 3, colW.reduce((a,b) => a+b, 0), 0.5).fill();
-                doc.fillColor('#000');
-
-                let granTotal = 0;
-                doc.fontSize(7).font('Helvetica');
-                for (const item of items) {
-                    if (y > 750) { doc.addPage(); y = 30; }
-                    x = startX;
-                    doc.text(item.codigo, x, y, { width: colW[0] });
-                    x += colW[0];
-                    doc.text((item.tipo || '').substring(0, 30), x, y, { width: colW[1] });
-                    x += colW[1];
-                    doc.text(String(item.cantidad), x, y, { width: colW[2], align: 'right' });
-                    x += colW[2];
-                    doc.text(`$${item.precio.toFixed(2)}`, x, y, { width: colW[3], align: 'right' });
-                    x += colW[3];
-                    const total = item.precio * item.cantidad;
-                    doc.text(`$${total.toFixed(2)}`, x, y, { width: colW[4], align: 'right' });
-                    granTotal += total;
-                    y += lineH;
-                }
-
-                y += 3;
-                doc.fillColor('#ccc').rect(startX, y - 3, colW.reduce((a,b) => a+b, 0), 0.5).fill();
-                y += 5;
-                doc.fontSize(9).font('Helvetica-Bold').fillColor('#000');
-                doc.text(`TOTAL GENERAL: $${granTotal.toFixed(2)}`, startX, y, { width: colW.reduce((a,b) => a+b, 0), align: 'right' });
-                y += 20;
-
-                if (errores && errores.length > 0) {
-                    doc.fontSize(7).font('Helvetica').fillColor('#c0392b');
-                    doc.text('Productos no incluidos:', startX, y);
-                    y += 12;
-                    errores.forEach(e => {
-                        doc.text(e.replace(/\*/g, ''), startX + 10, y);
-                        y += 10;
-                    });
-                }
-
-                doc.fillColor('#888').fontSize(7).font('Helvetica');
-                doc.text('Genere el pedido: https://www.one4cars.com/tomar_pedido.php/', 30, doc.page.height - 35, { align: 'center' });
-                doc.end();
-            } catch (e) { resolve(null); }
-        });
-    }
-
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
     const { version } = await fetchLatestBaileysVersion();
 
@@ -1045,8 +963,15 @@ async function startBot() {
                 }
             }
             if (itemsPedido.length >= 2) {
-                let itemsOk = [];
+                let header = `📋 *COTIZACIÓN*\n`;
+                if (vendedor) header += `👤 Vendedor: *${vendedor.nombre}*\n`;
+                header += `┌──────────┬──────────────────────┬──────┬────────┬────────┐\n`;
+                header += `│ Código   │ Tipo                  │ Cant │ Precio │ Total  │\n`;
+                header += `├──────────┼──────────────────────┼──────┼────────┼────────┤\n`;
+                let cuerpo = '';
+                let granTotal = 0;
                 let errores = [];
+                let idx = 0;
                 for (const item of itemsPedido) {
                     const prods = await buscarProductoPorCodigo(item.codigo);
                     if (!prods || prods.length === 0) {
@@ -1059,78 +984,28 @@ async function startBot() {
                         errores.push(`❌ *${p.producto}*: Sin stock`);
                         continue;
                     }
-                    itemsOk.push({ codigo: p.producto, tipo: p.tipo, cantidad: item.cantidad, precio: parseFloat(p.precio_final || 0) });
+                    const precio = parseFloat(p.precio_final || 0);
+                    const total = precio * item.cantidad;
+                    granTotal += total;
+                    const cod = p.producto.padEnd(8);
+                    const tipo = (p.tipo || '').substring(0, 20).padEnd(20);
+                    const cant = item.cantidad.toString().padStart(4);
+                    const prec = `$${precio.toFixed(2)}`.padStart(6);
+                    const tot = `$${total.toFixed(2)}`.padStart(6);
+                    cuerpo += `│ ${cod} │ ${tipo} │ ${cant} │ ${prec} │ ${tot} │\n`;
+                    idx++;
                 }
-                if (itemsOk.length > 0) {
-                    const pdfBuf = await generarPDFCotizacion(itemsOk, vendedor, errores);
-                    if (pdfBuf && socketBot) {
-                        try {
-                            await socketBot.sendMessage(from, { document: pdfBuf, fileName: 'Cotizacion.pdf', mimetype: 'application/pdf', caption: '📋 *COTIZACIÓN* - Documento adjunto' });
-                        } catch (e) {
-                            let fallback = `📋 *COTIZACIÓN*\n`;
-                            if (vendedor) fallback += `👤 Vendedor: *${vendedor.nombre}*\n\n`;
-                            let gt = 0;
-                            itemsOk.forEach(it => { const t = it.precio * it.cantidad; gt += t; fallback += `*${it.codigo}* - ${it.tipo || ''}\n   ${it.cantidad} und x $${it.precio.toFixed(2)} = *$${t.toFixed(2)}*\n`; });
-                            fallback += `\n*TOTAL GENERAL: $${gt.toFixed(2)}*`;
-                            if (errores.length > 0) fallback += `\n\n⚠️ Productos no incluidos:\n${errores.join('\n')}`;
-                            await safeSendMessage(from, { text: fallback });
-                        }
-                    } else {
-                        let fallback = `📋 *COTIZACIÓN*\n`;
-                        if (vendedor) fallback += `👤 Vendedor: *${vendedor.nombre}*\n\n`;
-                        let gt = 0;
-                        itemsOk.forEach(it => { const t = it.precio * it.cantidad; gt += t; fallback += `*${it.codigo}* - ${it.tipo || ''}\n   ${it.cantidad} und x $${it.precio.toFixed(2)} = *$${t.toFixed(2)}*\n`; });
-                        fallback += `\n*TOTAL GENERAL: $${gt.toFixed(2)}*`;
-                        if (errores.length > 0) fallback += `\n\n⚠️ Productos no incluidos:\n${errores.join('\n')}`;
-                        await safeSendMessage(from, { text: fallback });
-                    }
-                    pendientesConfirmacion.set(from, { items: itemsOk, vendedor: vendedor || null, pushName });
-                    await setModo(from, 'confirmando');
-                    await sleep(500);
-                    await safeSendMessage(from, { text: `✅ *¿Desea confirmar este pedido?*\n\nResponda *SI* para confirmar o *NO* para cancelar.` });
-                } else {
-                    let msg = `⚠️ *No se pudo generar la cotización*\n\n${errores.join('\n')}`;
-                    await safeSendMessage(from, { text: msg });
+                if (cuerpo) {
+                    header += cuerpo;
+                    header += `├──────────┼──────────────────────┼──────┼────────┼────────┤\n`;
+                    header += `│          │ TOTAL GENERAL         │      │        │ ${`$${granTotal.toFixed(2)}`.padStart(6)} │\n`;
+                    header += `└──────────┴──────────────────────┴──────┴────────┴────────┘\n`;
                 }
-                return;
-            }
-
-            // --- CONFIRMACIÓN DE PEDIDO ---
-            if (pendientesConfirmacion.has(from) && sesion && sesion.modo === 'confirmando') {
-                const confWords = ['si', 'sí', 'confirmo', 'confirmar', 'dale', 'ok', 'okey', 'claro', 'simon', 'confirmado', 'yes'];
-                const cancelWords = ['no', 'nop', 'cancelar', 'cancela', 'ninguno', 'nunca'];
-                if (confWords.includes(text)) {
-                    const data = pendientesConfirmacion.get(from);
-                    try {
-                        const hoy = new Date().toISOString().split('T')[0];
-                        const [maxNro] = await pool.execute("SELECT COALESCE(MAX(nro_factura),0)+1 as next FROM tab_pedidos");
-                        const nro = maxNro[0].next;
-                        const tel = from.split('@')[0].replace(/\D/g, '');
-                        const tot = data.items.reduce((s, it) => s + it.precio * it.cantidad, 0);
-                        await pool.execute("INSERT INTO tab_pedidos (nro_factura, fecha_reg, nombres, celular, total, id_vendedor, vendedor, celular_vendedor, pagada, anulado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'NO', 'no')",
-                            [nro, hoy, data.pushName || 'Cliente', tel, tot, data.vendedor?.id_vendedor || 0, data.vendedor?.nombre || '', data.vendedor?.celular_vendedor || '']);
-                        const [pedido] = await pool.execute("SELECT MAX(id_factura) as id FROM tab_pedidos");
-                        const idPed = pedido[0].id;
-                        for (let i = 0; i < data.items.length; i++) {
-                            const it = data.items[i];
-                            await pool.execute("INSERT INTO tab_pedidos_reng (id_factura, nro_reglon, cantidad, precio_unitario, precio_total, tipo, fecha_reg) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                                [idPed, i + 1, it.cantidad, it.precio, it.precio * it.cantidad, it.tipo || '', hoy]);
-                        }
-                        const adminJids = ADMIN_IDS.map(id => formatWhatsApp(id)).filter(Boolean);
-                        for (const aj of adminJids) {
-                            await safeSendMessage(aj, { text: `📦 *NUEVO PEDIDO CONFIRMADO #${nro}*\nCliente: ${data.pushName || tel}\nTotal: $${tot.toFixed(2)}\nVendedor: ${data.vendedor?.nombre || 'N/A'}\n\n_Ver pedido en el sistema_` });
-                        }
-                        await safeSendMessage(from, { text: `✅ *Pedido #${nro} confirmado con éxito!*\n\nUn administrador lo revisará pronto. ¡Gracias por su preferencia! 🙏` });
-                    } catch (e) { console.log("[PEDIDO] Error al guardar:", e.message); await safeSendMessage(from, { text: "❌ Ocurrió un error al confirmar el pedido. Intente nuevamente." }); }
-                    pendientesConfirmacion.delete(from);
-                    await setModo(from, 'bot');
-                    return;
-                } else if (cancelWords.includes(text)) {
-                    pendientesConfirmacion.delete(from);
-                    await setModo(from, 'bot');
-                    await safeSendMessage(from, { text: "❌ Pedido cancelado." });
-                    return;
+                if (errores.length > 0) {
+                    header += `\n⚠️ *Productos no incluidos:*\n${errores.join('\n')}\n`;
                 }
+                header += `\n_Genere el pedido aquí:_ https://www.one4cars.com/tomar_pedido.php/`;
+                return await safeSendMessage(from, { text: header });
             }
 
             // --- 5. LÓGICA DE PRODUCTOS MEJORADA ---
@@ -1382,16 +1257,12 @@ const server = http.createServer(async (req, res) => {
             </div>
         </body>
         </html>`);
-    } else if (routename === '/historial') {
-        const [msgs] = await pool.execute("SELECT h.id, h.telefono, h.rol, h.contenido, h.fecha FROM historial_chat h ORDER BY h.fecha DESC LIMIT 200");
-        const rows = msgs.map(m => `<tr><td>${m.telefono}</td><td class="${m.rol === 'user' ? 'text-primary' : 'text-success'}">${m.rol}</td><td style="max-width:400px;word-break:break-word">${m.contenido}</td><td>${new Date(m.fecha).toLocaleString()}</td></tr>`).join('');
-        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Historial Chat</title></head><body class="bg-light">${header}<div class="container mt-3"><h3>💬 Historial de Conversaciones</h3><div class="table-responsive"><table class="table table-sm table-striped"><thead><tr><th>Teléfono</th><th>Rol</th><th>Mensaje</th><th>Fecha</th></tr></thead><tbody>${rows}</tbody></table></div><a href="/" class="btn btn-outline-secondary">Volver</a></div></body></html>`);
     } else if (routename === '/recordatorio-estado') {
         const facturas = await notificador.obtenerFacturasVencidas();
         const enviados = await notificador.obtenerRecordatoriosEnviados();
         res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Recordatorios</title></head><body class="bg-light">${header}<div class="container mt-5"><div class="card shadow-lg p-4 mx-auto" style="max-width: 800px; border-radius: 15px;"><h3>📅 Recordatorios</h3><hr><table class="table table-sm"><thead><tr><th>Factura</th><th>Cliente</th><th>Días</th><th>Estado</th></tr></thead><tbody>${facturas.map(f => `<tr><td>${f.nro_factura}</td><td>${f.nombres}</td><td>${f.dias_vencida}</td><td>${(enviados[f.id_factura]) ? '✅' : '⏳'}</td></tr>`).join('')}</tbody></table><a href="/" class="btn btn-outline-secondary">Volver</a></div></div></body></html>`);
     } else {
-        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="30"><title>Admin ONE4CARS</title></head><body style="background-color: #f4f7f6;">${header}<div class="container text-center"><div class="card shadow-lg p-4 mx-auto" style="max-width: 500px; border-radius: 15px;"><h4 class="mb-3">Estado del Bot</h4><div class="my-4">${qrCodeData.startsWith('data') ? `<img src="${qrCodeData}" class="img-fluid rounded" style="max-width: 250px;">` : `<h2 class="text-success">${qrCodeData}</h2>`}</div><p>BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}</p><div class="d-grid gap-2"><a href="/cobranza" class="btn btn-primary">PANEL DE COBRANZA</a><a href="/marketing-panel" class="btn btn-info text-white">PANEL DE MARKETING</a><a href="/notificador-estado" class="btn btn-secondary text-white">NOTIFICADOR</a><a href="/historial" class="btn btn-info text-white">HISTORIAL</a><a href="/recordatorio-estado" class="btn btn-warning text-dark">RECORDATORIOS</a></div></div></div></body></html>`);
+        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="30"><title>Admin ONE4CARS</title></head><body style="background-color: #f4f7f6;">${header}<div class="container text-center"><div class="card shadow-lg p-4 mx-auto" style="max-width: 500px; border-radius: 15px;"><h4 class="mb-3">Estado del Bot</h4><div class="my-4">${qrCodeData.startsWith('data') ? `<img src="${qrCodeData}" class="img-fluid rounded" style="max-width: 250px;">` : `<h2 class="text-success">${qrCodeData}</h2>`}</div><p>BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}</p><div class="d-grid gap-2"><a href="/cobranza" class="btn btn-primary">PANEL DE COBRANZA</a><a href="/marketing-panel" class="btn btn-info text-white">PANEL DE MARKETING</a><a href="/notificador-estado" class="btn btn-secondary text-white">NOTIFICADOR</a><a href="/recordatorio-estado" class="btn btn-warning text-dark">RECORDATORIOS</a></div></div></div></body></html>`);
     }
 });
 
