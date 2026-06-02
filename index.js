@@ -328,14 +328,14 @@ async function buscarProductoPorTexto(texto) {
 
     const expandirFormas = (pal) => {
         const f = [pal];
-        if (pal.endsWith('es') && pal.length > 4) f.push(pal.slice(0, -2));
+        if (pal.endsWith('es') && pal.length >= 3) f.push(pal.slice(0, -2));
         if (pal.endsWith('s') && pal.length > 3 && !pal.endsWith('es')) f.push(pal.slice(0, -1));
         if (!pal.endsWith('s')) {
             f.push(pal + 's');
             if (pal.endsWith('z')) f.push(pal.slice(0, -1) + 'ces');
         }
-        if (pal.endsWith('a') && pal.length > 4) f.push(pal.slice(0, -1) + 'o');
-        if (pal.endsWith('o') && pal.length > 4) f.push(pal.slice(0, -1) + 'a');
+        if (pal.endsWith('a') && pal.length >= 3) f.push(pal.slice(0, -1) + 'o');
+        if (pal.endsWith('o') && pal.length >= 3) f.push(pal.slice(0, -1) + 'a');
         return [...new Set(f)];
     };
     
@@ -421,7 +421,14 @@ async function checkNuevasFacturas() {
     if (!isBotReady() || notificadorEjecutando) return;
     notificadorEjecutando = true;
     try {
-        const facturas = await notificador.obtenerFacturasNoNotificadas();
+        const [facturas] = await pool.execute(
+            `SELECT f.id_factura, f.nro_factura, f.nombres, f.celular, f.total, f.abono_factura, f.porcentaje, f.fecha_reg, f.id_cliente, f.id_vendedor,
+                    v.celular_vendedor, v.nombre as vendedor_nombre
+             FROM tab_facturas f
+             LEFT JOIN tab_vendedores v ON f.id_vendedor = v.id_vendedor
+             WHERE f.whatsapp_notificado = 'NO' AND f.anulado = 'no' AND f.pagada = 'NO'
+             ORDER BY f.id_factura ASC`
+        );
         for (const f of facturas) {
             const jid = formatWhatsApp(f.celular);
             if (!jid) continue;
