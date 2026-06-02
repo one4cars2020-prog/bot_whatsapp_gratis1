@@ -481,7 +481,7 @@ async function checkFacturasVencidas() {
             const nivel = obtenerNivelRecordatorio(dias);
             if (!nivel) continue;
 
-            const monto = (parseFloat(f.total) - parseFloat(f.abono_factura || 0)) / (parseFloat(f.porcentaje) || 1);
+            let monto = (parseFloat(f.total) - parseFloat(f.abono_factura || 0)) / (parseFloat(f.porcentaje) || 1);
             if (f.vendedor_nombre && f.vendedor_nombre.toUpperCase() === 'MANUEL FERRAZ') {
                 monto = monto / 0.80;
             }
