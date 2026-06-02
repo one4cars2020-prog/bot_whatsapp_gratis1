@@ -4,8 +4,10 @@ const qrcode = require('qrcode');
 const http = require('http');
 const pino = require('pino');
 const fs = require('fs');
+const path = require('path');
 const mysql = require('mysql2/promise');
 const axios = require('axios');
+const PDFDocument = (() => { try { return require('pdfkit'); } catch(e) { return null; } })();
 
 // CAPTURA GLOBAL DE ERRORES EVITA QUE EL BOT MUERA
 process.on('unhandledRejection', (err) => {
@@ -806,6 +808,85 @@ async function startBot() {
         socketBot = null;
     }
 
+    const logoPaths = [path.join(__dirname, 'imagen', 'brand_logo.jpg'), path.join(__dirname, 'brand_logo.jpg'), path.join(__dirname, '..', 'imagen', 'brand_logo.jpg')];
+
+    async function generarPDFCotizacion(items, vendedor, errores) {
+        return new Promise((resolve) => {
+            try {
+                const doc = new PDFDocument({ margin: 30, size: 'A4' });
+                const buffers = [];
+                doc.on('data', b => buffers.push(b));
+                doc.on('end', () => resolve(Buffer.concat(buffers)));
+                
+                let logoOk = false;
+                for (const lp of logoPaths) {
+                    if (fs.existsSync(lp)) { try { doc.image(lp, 30, 20, { width: 110 }); logoOk = true; } catch(e){} break; }
+                }
+                if (!logoOk) {
+                    doc.fontSize(16).font('Helvetica-Bold').fillColor('#1a73e8').text('ONE4CARS', 30, 30);
+                }
+
+                doc.fillColor('#000');
+                doc.fontSize(18).font('Helvetica-Bold').text('COTIZACIÓN', { align: 'center' });
+                doc.moveDown(0.3);
+                if (vendedor) doc.fontSize(10).font('Helvetica').text(`Vendedor: ${vendedor.nombre}`, { align: 'center' });
+                doc.moveDown(0.5);
+                
+                const colW = [55, 140, 35, 55, 55];
+                const startX = 30;
+                let y = doc.y + 5;
+                const lineH = 14;
+
+                doc.fontSize(7).font('Helvetica-Bold').fillColor('#333');
+                let x = startX;
+                ['Código', 'Tipo', 'Cant', 'Precio', 'Total'].forEach((h, i) => { doc.text(h, x, y, { width: colW[i] }); x += colW[i]; });
+                y += lineH;
+                doc.fillColor('#ccc').rect(startX, y - 3, colW.reduce((a,b) => a+b, 0), 0.5).fill();
+                doc.fillColor('#000');
+
+                let granTotal = 0;
+                doc.fontSize(7).font('Helvetica');
+                for (const item of items) {
+                    if (y > 750) { doc.addPage(); y = 30; }
+                    x = startX;
+                    doc.text(item.codigo, x, y, { width: colW[0] });
+                    x += colW[0];
+                    doc.text((item.tipo || '').substring(0, 30), x, y, { width: colW[1] });
+                    x += colW[1];
+                    doc.text(String(item.cantidad), x, y, { width: colW[2], align: 'right' });
+                    x += colW[2];
+                    doc.text(`$${item.precio.toFixed(2)}`, x, y, { width: colW[3], align: 'right' });
+                    x += colW[3];
+                    const total = item.precio * item.cantidad;
+                    doc.text(`$${total.toFixed(2)}`, x, y, { width: colW[4], align: 'right' });
+                    granTotal += total;
+                    y += lineH;
+                }
+
+                y += 3;
+                doc.fillColor('#ccc').rect(startX, y - 3, colW.reduce((a,b) => a+b, 0), 0.5).fill();
+                y += 5;
+                doc.fontSize(9).font('Helvetica-Bold').fillColor('#000');
+                doc.text(`TOTAL GENERAL: $${granTotal.toFixed(2)}`, startX, y, { width: colW.reduce((a,b) => a+b, 0), align: 'right' });
+                y += 20;
+
+                if (errores && errores.length > 0) {
+                    doc.fontSize(7).font('Helvetica').fillColor('#c0392b');
+                    doc.text('Productos no incluidos:', startX, y);
+                    y += 12;
+                    errores.forEach(e => {
+                        doc.text(e.replace(/\*/g, ''), startX + 10, y);
+                        y += 10;
+                    });
+                }
+
+                doc.fillColor('#888').fontSize(7).font('Helvetica');
+                doc.text('Genere el pedido: https://www.one4cars.com/tomar_pedido.php/', 30, doc.page.height - 35, { align: 'center' });
+                doc.end();
+            } catch (e) { resolve(null); }
+        });
+    }
+
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
     const { version } = await fetchLatestBaileysVersion();
 
@@ -963,15 +1044,8 @@ async function startBot() {
                 }
             }
             if (itemsPedido.length >= 2) {
-                let header = `📋 *COTIZACIÓN*\n`;
-                if (vendedor) header += `👤 Vendedor: *${vendedor.nombre}*\n`;
-                header += `┌──────────┬──────────────────────┬──────┬────────┬────────┐\n`;
-                header += `│ Código   │ Tipo                  │ Cant │ Precio │ Total  │\n`;
-                header += `├──────────┼──────────────────────┼──────┼────────┼────────┤\n`;
-                let cuerpo = '';
-                let granTotal = 0;
+                let itemsOk = [];
                 let errores = [];
-                let idx = 0;
                 for (const item of itemsPedido) {
                     const prods = await buscarProductoPorCodigo(item.codigo);
                     if (!prods || prods.length === 0) {
@@ -984,28 +1058,36 @@ async function startBot() {
                         errores.push(`❌ *${p.producto}*: Sin stock`);
                         continue;
                     }
-                    const precio = parseFloat(p.precio_final || 0);
-                    const total = precio * item.cantidad;
-                    granTotal += total;
-                    const cod = p.producto.padEnd(8);
-                    const tipo = (p.tipo || '').substring(0, 20).padEnd(20);
-                    const cant = item.cantidad.toString().padStart(4);
-                    const prec = `$${precio.toFixed(2)}`.padStart(6);
-                    const tot = `$${total.toFixed(2)}`.padStart(6);
-                    cuerpo += `│ ${cod} │ ${tipo} │ ${cant} │ ${prec} │ ${tot} │\n`;
-                    idx++;
+                    itemsOk.push({ codigo: p.producto, tipo: p.tipo, cantidad: item.cantidad, precio: parseFloat(p.precio_final || 0) });
                 }
-                if (cuerpo) {
-                    header += cuerpo;
-                    header += `├──────────┼──────────────────────┼──────┼────────┼────────┤\n`;
-                    header += `│          │ TOTAL GENERAL         │      │        │ ${`$${granTotal.toFixed(2)}`.padStart(6)} │\n`;
-                    header += `└──────────┴──────────────────────┴──────┴────────┴────────┘\n`;
+                if (itemsOk.length > 0) {
+                    const pdfBuf = await generarPDFCotizacion(itemsOk, vendedor, errores);
+                    if (pdfBuf && socketBot) {
+                        try {
+                            await socketBot.sendMessage(from, { document: pdfBuf, fileName: 'Cotizacion.pdf', mimetype: 'application/pdf', caption: '📋 *COTIZACIÓN* - Documento adjunto' });
+                        } catch (e) {
+                            let fallback = `📋 *COTIZACIÓN*\n`;
+                            if (vendedor) fallback += `👤 Vendedor: *${vendedor.nombre}*\n\n`;
+                            let gt = 0;
+                            itemsOk.forEach(it => { const t = it.precio * it.cantidad; gt += t; fallback += `*${it.codigo}* - ${it.tipo || ''}\n   ${it.cantidad} und x $${it.precio.toFixed(2)} = *$${t.toFixed(2)}*\n`; });
+                            fallback += `\n*TOTAL GENERAL: $${gt.toFixed(2)}*`;
+                            if (errores.length > 0) fallback += `\n\n⚠️ Productos no incluidos:\n${errores.join('\n')}`;
+                            await safeSendMessage(from, { text: fallback });
+                        }
+                    } else {
+                        let fallback = `📋 *COTIZACIÓN*\n`;
+                        if (vendedor) fallback += `👤 Vendedor: *${vendedor.nombre}*\n\n`;
+                        let gt = 0;
+                        itemsOk.forEach(it => { const t = it.precio * it.cantidad; gt += t; fallback += `*${it.codigo}* - ${it.tipo || ''}\n   ${it.cantidad} und x $${it.precio.toFixed(2)} = *$${t.toFixed(2)}*\n`; });
+                        fallback += `\n*TOTAL GENERAL: $${gt.toFixed(2)}*`;
+                        if (errores.length > 0) fallback += `\n\n⚠️ Productos no incluidos:\n${errores.join('\n')}`;
+                        await safeSendMessage(from, { text: fallback });
+                    }
+                } else {
+                    let msg = `⚠️ *No se pudo generar la cotización*\n\n${errores.join('\n')}`;
+                    await safeSendMessage(from, { text: msg });
                 }
-                if (errores.length > 0) {
-                    header += `\n⚠️ *Productos no incluidos:*\n${errores.join('\n')}\n`;
-                }
-                header += `\n_Genere el pedido aquí:_ https://www.one4cars.com/tomar_pedido.php/`;
-                return await safeSendMessage(from, { text: header });
+                return;
             }
 
             // --- 5. LÓGICA DE PRODUCTOS MEJORADA ---
