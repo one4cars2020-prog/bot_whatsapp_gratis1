@@ -270,7 +270,7 @@ async function obtenerPorcentaje() {
 async function buscarProductoPorCodigo(codigo) {
     const codLimpio = codigo.trim();
     try {
-        const sql = `SELECT producto, descripcion, tipo, precio_final, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando FROM tab_productos WHERE producto = ? LIMIT 1`;
+        const sql = `SELECT producto, descripcion, tipo, precio_minimo, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando FROM tab_productos WHERE producto = ? LIMIT 1`;
         const [rows] = await pool.execute(sql, [codLimpio]);
         if (rows.length > 0) return rows;
     } catch (e) {
@@ -281,12 +281,12 @@ async function buscarProductoPorCodigo(codigo) {
 
 async function obtenerTop10() {
     try {
-        const sql = `SELECT r.producto, p.descripcion, p.precio_final, SUM(r.cantidad) as total_vendido FROM tab_facturas_reng r JOIN tab_facturas f ON f.nro_factura = r.id_factura JOIN tab_productos p ON p.producto = r.producto WHERE f.fecha_reg >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND f.anulado = 'no' GROUP BY r.producto ORDER BY total_vendido DESC LIMIT 10`;
+        const sql = `SELECT r.producto, p.descripcion, p.precio_minimo, SUM(r.cantidad) as total_vendido FROM tab_facturas_reng r JOIN tab_facturas f ON f.nro_factura = r.id_factura JOIN tab_productos p ON p.producto = r.producto WHERE f.fecha_reg >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND f.anulado = 'no' GROUP BY r.producto ORDER BY total_vendido DESC LIMIT 10`;
         const [rows] = await pool.execute(sql);
         if (rows.length > 0) return rows;
     } catch (e) { console.log("Error Top10 id_factura:", e.message); }
     try {
-        const sql = `SELECT r.producto, p.descripcion, p.precio_final, SUM(r.cantidad) as total_vendido FROM tab_facturas_reng r JOIN tab_facturas f ON f.nro_factura = r.id_facturas JOIN tab_productos p ON p.producto = r.producto WHERE f.fecha_reg >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND f.anulado = 'no' GROUP BY r.producto ORDER BY total_vendido DESC LIMIT 10`;
+        const sql = `SELECT r.producto, p.descripcion, p.precio_minimo, SUM(r.cantidad) as total_vendido FROM tab_facturas_reng r JOIN tab_facturas f ON f.nro_factura = r.id_facturas JOIN tab_productos p ON p.producto = r.producto WHERE f.fecha_reg >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND f.anulado = 'no' GROUP BY r.producto ORDER BY total_vendido DESC LIMIT 10`;
         const [rows] = await pool.execute(sql);
         if (rows.length > 0) return rows;
     } catch (e) { console.log("Error Top10 id_facturas:", e.message); }
@@ -371,7 +371,7 @@ async function buscarProductoPorTexto(texto) {
     });
 
     try {
-        const sql = `SELECT producto, descripcion, tipo, precio_final, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando FROM tab_productos WHERE ${whereClause} LIMIT 8`;
+        const sql = `SELECT producto, descripcion, tipo, precio_minimo, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando FROM tab_productos WHERE ${whereClause} LIMIT 8`;
         const [rows] = await pool.execute(sql, queryParams);
         if (rows.length > 0) return rows;
     } catch (e) {
@@ -396,7 +396,7 @@ async function buscarProductoPorTexto(texto) {
 
     try {
         const sqlRelevancia = `
-            SELECT producto, descripcion, tipo, precio_final, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando
+            SELECT producto, descripcion, tipo, precio_minimo, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando
             FROM tab_productos 
             WHERE ${orConditions.join(" OR ")} 
             HAVING (${relevanceSQL}) >= ? 
@@ -411,7 +411,7 @@ async function buscarProductoPorTexto(texto) {
 
     if (minRelevance > 1 && palabrasBase.length > 1) {
         try {
-            const sqlCatchall = `SELECT producto, descripcion, tipo, precio_final, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando FROM tab_productos WHERE ${orConditions.join(" OR ")} HAVING (${relevanceSQL}) >= 1 ORDER BY ${relevanceSQL} DESC LIMIT 8`;
+            const sqlCatchall = `SELECT producto, descripcion, tipo, precio_minimo, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando FROM tab_productos WHERE ${orConditions.join(" OR ")} HAVING (${relevanceSQL}) >= 1 ORDER BY ${relevanceSQL} DESC LIMIT 8`;
             const [rows] = await pool.execute(sqlCatchall, [...orParams, 1]);
             if (rows.length > 0) return rows;
         } catch (e) {
@@ -1016,6 +1016,7 @@ async function startBot() {
                 console.log(`[COTIZACION] Detectado pedido de ${itemsPedido.length} items de ${from}`);
                 let itemsOk = [];
                 let errores = [];
+                const pct = await obtenerPorcentaje();
                 for (const item of itemsPedido) {
                     const prods = await buscarProductoPorCodigo(item.codigo);
                     if (!prods || prods.length === 0) {
@@ -1028,12 +1029,13 @@ async function startBot() {
                         errores.push(`❌ *${p.producto}*: Sin stock`);
                         continue;
                     }
-                    itemsOk.push({ codigo: p.producto, tipo: p.tipo, cantidad: item.cantidad, precio: parseFloat(p.precio_final || 0) });
+                    itemsOk.push({ codigo: p.producto, tipo: p.tipo, cantidad: item.cantidad, precio: parseFloat(p.precio_minimo || 0) / pct });
                 }
                 if (itemsOk.length > 0) {
+                    let gt = 0;
                     let msg = `📋 *COTIZACIÓN*\n`;
                     if (vendedor) msg += `👤 Vendedor: *${vendedor.nombre}*\n\n`;
-                    let gt = 0;
+                    msg += `💰 *Precios pagaderos a tasa BCV*\n\n`;
                     itemsOk.forEach(it => { const t = it.precio * it.cantidad; gt += t; msg += `*${it.codigo}* - ${it.tipo || ''}\n   ${it.cantidad} und x $${it.precio.toFixed(2)} = *$${t.toFixed(2)}*\n`; });
                     msg += `\n*TOTAL GENERAL: $${gt.toFixed(2)}*`;
                     if (errores.length > 0) msg += `\n\n⚠️ Productos no incluidos:\n${errores.join('\n')}`;
@@ -1111,6 +1113,7 @@ async function startBot() {
                     }
 
                     if (prods) {
+                        const pct = await obtenerPorcentaje();
                         const saludos = [
                             "Saludos estimado, gracias por tu consulta. Aquí tienes la información solicitada: 👇",
                             "¡Hola! He buscado en nuestro inventario y encontré esto: 👇",
@@ -1122,7 +1125,7 @@ async function startBot() {
 
                         for (const p of prods) {
                             if (!isBotReady()) break; 
-                            const precioLimpio = parseFloat(p.precio_final || 0).toFixed(2);
+                            const precio = parseFloat(p.precio_minimo || 0) / pct;
                             
                             let infoStock = "";
                             if (parseFloat(p.stock_total || 0) <= 0) {
@@ -1136,7 +1139,7 @@ async function startBot() {
                                 infoStock = "\n✅ *Disponible*";
                             }
                             
-                            const caption = `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio Final: $${precioLimpio}*${infoStock}\n📝 ${p.descripcion}\n🔗 Ficha: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}`;
+                            const caption = `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio: $${precio.toFixed(2)} (Pagadero a tasa BCV)*${infoStock}\n📝 ${p.descripcion}\n🔗 Ficha: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}`;
                             const imgUrl = `https://one4cars.com/imagen/${p.producto}.jpg`;
                             try {
                                 await socketBot.sendMessage(from, { image: { url: imgUrl }, caption: caption });
@@ -1171,10 +1174,12 @@ async function startBot() {
                 if (!top10 || top10.length === 0) {
                     return await safeSendMessage(from, { text: "No hay datos de ventas este mes aún." });
                 }
-                let msg = `🏆 *TOP 10 MÁS VENDIDOS (MES)*\n\n`;
+                const pct = await obtenerPorcentaje();
+                let msg = `🏆 *TOP 10 MÁS VENDIDOS (MES)*\n💰 *Precios pagaderos a tasa BCV*\n\n`;
                 top10.forEach((p, i) => {
+                    const precio = parseFloat(p.precio_minimo || 0) / pct;
                     msg += `${i + 1}. *${p.producto}* - ${p.descripcion}\n`;
-                    msg += `   ${p.total_vendido} und | $${parseFloat(p.precio_final || 0).toFixed(2)} c/u\n`;
+                    msg += `   ${p.total_vendido} und | $${precio.toFixed(2)} c/u\n`;
                 });
                 return await safeSendMessage(from, { text: msg });
             }
