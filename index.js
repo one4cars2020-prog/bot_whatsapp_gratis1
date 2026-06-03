@@ -1042,7 +1042,10 @@ async function startBot() {
                         const hoy = new Date().toISOString().split('T')[0];
                         const [maxNro] = await pool.execute("SELECT COALESCE(MAX(nro_factura),0)+1 as next FROM tab_pedidos");
                         const nro = maxNro[0].next;
-                        const tel = from.split('@')[0].replace(/\D/g, '');
+                        const jidParts = from.split('@');
+                        const rawTel = jidParts[0].replace(/\D/g, '');
+                        const isLid = jidParts[1] && jidParts[1].includes('lid');
+                        const tel = isLid || rawTel.length > 13 ? `LID:${rawTel}` : rawTel;
                         const tot = data.items.reduce((s, it) => s + it.precio * it.cantidad, 0);
                         await pool.execute("INSERT INTO tab_pedidos (nro_factura, fecha_reg, nombres, celular, total, id_vendedor, vendedor, celular_vendedor, pagada, anulado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'NO', 'no')",
                             [nro, hoy, data.pushName || 'Cliente', tel, tot, data.vendedor?.id_vendedor || 0, data.vendedor?.nombre || '', data.vendedor?.celular_vendedor || '']);
