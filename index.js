@@ -253,7 +253,7 @@ async function buscarCliente(rifLimpio) {
 async function buscarProductoPorCodigo(codigo) {
     const codLimpio = codigo.trim();
     try {
-        const sql = `SELECT producto, descripcion, tipo, precio_final, (cantidad_existencia + cantidad_existencia_almacen) as stock_total FROM tab_productos WHERE producto = ? LIMIT 1`;
+        const sql = `SELECT producto, descripcion, tipo, precio_final, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando FROM tab_productos WHERE producto = ? LIMIT 1`;
         const [rows] = await pool.execute(sql, [codLimpio]);
         if (rows.length > 0) return rows;
     } catch (e) {
@@ -354,7 +354,7 @@ async function buscarProductoPorTexto(texto) {
     });
 
     try {
-        const sql = `SELECT producto, descripcion, tipo, precio_final, (cantidad_existencia + cantidad_existencia_almacen) as stock_total FROM tab_productos WHERE ${whereClause} LIMIT 8`;
+        const sql = `SELECT producto, descripcion, tipo, precio_final, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando FROM tab_productos WHERE ${whereClause} LIMIT 8`;
         const [rows] = await pool.execute(sql, queryParams);
         if (rows.length > 0) return rows;
     } catch (e) {
@@ -379,7 +379,7 @@ async function buscarProductoPorTexto(texto) {
 
     try {
         const sqlRelevancia = `
-            SELECT producto, descripcion, tipo, precio_final, (cantidad_existencia + cantidad_existencia_almacen) as stock_total 
+            SELECT producto, descripcion, tipo, precio_final, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando
             FROM tab_productos 
             WHERE ${orConditions.join(" OR ")} 
             HAVING (${relevanceSQL}) >= ? 
@@ -394,7 +394,7 @@ async function buscarProductoPorTexto(texto) {
 
     if (minRelevance > 1 && palabrasBase.length > 1) {
         try {
-            const sqlCatchall = `SELECT producto, descripcion, tipo, precio_final, (cantidad_existencia + cantidad_existencia_almacen) as stock_total FROM tab_productos WHERE ${orConditions.join(" OR ")} HAVING (${relevanceSQL}) >= 1 ORDER BY ${relevanceSQL} DESC LIMIT 8`;
+            const sqlCatchall = `SELECT producto, descripcion, tipo, precio_final, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando FROM tab_productos WHERE ${orConditions.join(" OR ")} HAVING (${relevanceSQL}) >= 1 ORDER BY ${relevanceSQL} DESC LIMIT 8`;
             const [rows] = await pool.execute(sqlCatchall, [...orParams, 1]);
             if (rows.length > 0) return rows;
         } catch (e) {
@@ -1091,7 +1091,12 @@ async function startBot() {
                             
                             let infoStock = "";
                             if (parseFloat(p.stock_total || 0) <= 0) {
-                                infoStock = "\n❌ *AGOTADO (Próximo a llegar)*";
+                                const fab = parseFloat(p.cantidad_fabricando || 0);
+                                if (fab > 0) {
+                                    infoStock = "\n🏭 *EN FÁBRICA (Próximo a llegar)*";
+                                } else {
+                                    infoStock = "\n❌ *Sin existencia, solo información*";
+                                }
                             } else {
                                 infoStock = "\n✅ *Disponible*";
                             }
