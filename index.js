@@ -29,7 +29,7 @@ const notificador = require('./notificador_local');
 const PORT = process.env.PORT || 10000;
 
 // LISTA DE ADMINISTRADORES
-const ADMIN_IDS = ["228621243408492", "4582830829690", "97899534934200", "584142531553", "250370957778958", "244362214650069", "60305753296939", "1924162162820", "39058600415402", "58381658247238"];   
+const ADMIN_IDS = ["228621243408492", "97899534934200", "584142531553", "250370957778958", "244362214650069", "60305753296939", "1924162162820", "39058600415402", "58381658247238"];   
 
 const pool = mysql.createPool({
     host: 'one4cars.com',
@@ -370,7 +370,7 @@ async function buscarProductoPorTexto(texto) {
 
     palabrasBase.forEach((pal, index) => {
         const formas = expandirFormas(pal);
-        const conditions = formas.map(() => "descripcion LIKE ?");
+        const conditions = formas.map(() => "descripcion LIKE ? COLLATE utf8_spanish_ci");
         whereClause += `(${conditions.join(" OR ")})`;
         if (index < palabrasBase.length - 1) whereClause += " AND ";
         formas.forEach(f => queryParams.push(`%${f}%`));
@@ -390,12 +390,12 @@ async function buscarProductoPorTexto(texto) {
     }
 
     const expandedTerms = [...new Set(palabrasBase.flatMap(expandirFormas))];
-    const orConditions = expandedTerms.map(() => "descripcion LIKE ?");
+    const orConditions = expandedTerms.map(() => "descripcion LIKE ? COLLATE utf8_spanish_ci");
     const orParams = expandedTerms.map(p => `%${p}%`);
 
     const relevanceParts = palabrasBase.map(p => {
         const formas = expandirFormas(p);
-        const cases = formas.map(f => `descripcion LIKE '%${f.replace(/[^a-z]/g, '')}%'`);
+        const cases = formas.map(f => `descripcion LIKE '%${f.replace(/[^a-z]/g, '')}%' COLLATE utf8_spanish_ci`);
         return `(CASE WHEN ${cases.join(' OR ')} THEN 1 ELSE 0 END)`;
     });
     const relevanceSQL = relevanceParts.join(' + ');
