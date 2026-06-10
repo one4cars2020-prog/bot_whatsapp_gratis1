@@ -1348,10 +1348,18 @@ const server = http.createServer(async (req, res) => {
         });
     } else if (routename === '/reset-sesion') {
         try {
+            if (socketBot) {
+                try {
+                    socketBot.removeAllListeners();
+                    socketBot.end(undefined);
+                } catch (e) {}
+                socketBot = null;
+            }
             if (fs.existsSync('auth_info')) {
                 fs.rmSync('auth_info', { recursive: true, force: true });
             }
             res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Sesión borrada</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="5;url=/"> </head><body class="bg-light"><div class="container mt-5 text-center"><div class="card shadow p-5 mx-auto" style="max-width:500px;border-radius:15px;"><h3>✅ Sesión borrada</h3><p class="mt-3">La carpeta <strong>auth_info</strong> se eliminó correctamente.</p><p>El bot mostrará un nuevo código QR en <strong>5 segundos</strong>.</p><a href="/" class="btn btn-primary mt-3">Ir al inicio</a></div></div></body></html>`);
+            setTimeout(() => startBot(), 2000);
         } catch (e) { res.end("Error al borrar sesión: " + e.message); }
     } else if (routename === '/notificador-estado') {
         
