@@ -370,7 +370,7 @@ async function buscarProductoPorTexto(texto) {
 
     palabrasBase.forEach((pal, index) => {
         const formas = expandirFormas(pal);
-        const conditions = formas.map(() => "descripcion LIKE ? COLLATE utf8_spanish_ci");
+        const conditions = formas.map(() => "descripcion COLLATE utf8_spanish_ci LIKE ?");
         whereClause += `(${conditions.join(" OR ")})`;
         if (index < palabrasBase.length - 1) whereClause += " AND ";
         formas.forEach(f => queryParams.push(`%${f}%`));
@@ -390,12 +390,12 @@ async function buscarProductoPorTexto(texto) {
     }
 
     const expandedTerms = [...new Set(palabrasBase.flatMap(expandirFormas))];
-    const orConditions = expandedTerms.map(() => "descripcion LIKE ? COLLATE utf8_spanish_ci");
+    const orConditions = expandedTerms.map(() => "descripcion COLLATE utf8_spanish_ci LIKE ?");
     const orParams = expandedTerms.map(p => `%${p}%`);
 
     const relevanceParts = palabrasBase.map(p => {
         const formas = expandirFormas(p);
-        const cases = formas.map(f => `descripcion LIKE '%${f.replace(/[^a-z]/g, '')}%' COLLATE utf8_spanish_ci`);
+        const cases = formas.map(f => `descripcion COLLATE utf8_spanish_ci LIKE '%${f.replace(/[^a-z]/g, '')}%'`);
         return `(CASE WHEN ${cases.join(' OR ')} THEN 1 ELSE 0 END)`;
     });
     const relevanceSQL = relevanceParts.join(' + ');
@@ -838,6 +838,7 @@ async function checkEstadisticasVendedores(force = false) {
 
 // ===== BOT WHATSAPP =====
 async function startBot() {
+    try {
     if (socketBot) {
         try {
             socketBot.removeAllListeners();
@@ -846,6 +847,9 @@ async function startBot() {
         socketBot = null;
     }
 
+    if (!fs.existsSync('auth_info')) {
+        fs.mkdirSync('auth_info', { recursive: true });
+    }
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
     const { version } = await fetchLatestBaileysVersion();
 
@@ -1276,6 +1280,10 @@ async function startBot() {
             return;
         } catch (e) { console.log("[MSG] Error en handler de mensajes:", e.message); }
     });
+    } catch (e) {
+        console.log("[BOT] Error iniciando bot:", e.message);
+        setTimeout(() => startBot(), 5000);
+    }
 }
 
 // ===== SERVIDOR HTTP =====
