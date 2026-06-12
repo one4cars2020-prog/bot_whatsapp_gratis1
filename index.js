@@ -169,11 +169,13 @@ async function buscarVendedor(jid, pushName) {
         [`%${telLimpio}%`, `%${telLimpio}%`]
     );
     if (r[0]) return r[0];
+    
     const jidDomain = jid.split('@')[1];
-    if (jidDomain && jidDomain.includes('lid') && pushName) {
+    // Modificado para que exija coincidencia exacta o un pushName válido y largo
+    if (jidDomain && jidDomain.includes('lid') && pushName && pushName.trim().length > 3) {
         const [r2] = await pool.execute(
-            "SELECT * FROM tab_vendedores WHERE nombre LIKE ? LIMIT 1",
-            [`%${pushName}%`]
+            "SELECT * FROM tab_vendedores WHERE nombre = ? LIMIT 1",
+            [pushName.trim()]
         );
         if (r2[0]) return r2[0];
     }
