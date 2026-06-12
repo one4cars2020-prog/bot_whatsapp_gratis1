@@ -411,7 +411,7 @@ async function buscarProductoPorTexto(texto) {
     if (minRelevance > 1 && palabrasBase.length > 1) {
         try {
             const sqlCatchall = `SELECT producto, descripcion, tipo, precio_minimo, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando FROM tab_productos WHERE ${orConditions.join(" OR ")} HAVING (${relevanceSQL}) >= 1 ORDER BY ${relevanceSQL} DESC LIMIT 8`;
-            const [rows] = await pool.execute(sqlCatchall, [...orParams, 1]);
+            const [rows] = await pool.execute(sqlCatchall, [...orParams]);
             if (rows.length > 0) return rows;
         } catch (e) {
             console.log("Error Intento 3:", e.message);
