@@ -240,43 +240,44 @@ function parsearFechaVisita(texto) {
     const hoy = new Date();
     hoy.setHours(0, 0, 0, 0);
 
-    if (t === 'hoy' || t.includes('ahora') || t === 'ya') return new Date(hoy);
+    if (t === 'hoy' || t.includes('ahora') || t === 'ya' || t === 'hoy mismo') return { fecha: new Date(hoy), frecuencia: 0 };
 
     if (t.includes('manana') && !t.includes('pasado')) {
         const r = new Date(hoy);
         r.setDate(r.getDate() + 1);
-        return r;
+        return { fecha: r, frecuencia: 0 };
     }
     if (t.includes('pasado manana') || t.includes('pasado mañana')) {
         const r = new Date(hoy);
         r.setDate(r.getDate() + 2);
-        return r;
+        return { fecha: r, frecuencia: 0 };
     }
 
     const matchNumDias = t.match(/(\d+)\s*(?:dias|día|dia)/);
     if (matchNumDias) {
         const r = new Date(hoy);
         r.setDate(r.getDate() + parseInt(matchNumDias[1]));
-        return r;
+        return { fecha: r, frecuencia: 0 };
     }
 
     const matchSemana = t.match(/(\d+)\s*(?:semanas|semana)/);
     if (matchSemana) {
         const r = new Date(hoy);
         r.setDate(r.getDate() + parseInt(matchSemana[1]) * 7);
-        return r;
+        return { fecha: r, frecuencia: 0 };
     }
 
     const matchMes = t.match(/(\d+)\s*(?:meses|mes)/);
     if (matchMes) {
         const r = new Date(hoy);
         r.setMonth(r.getMonth() + parseInt(matchMes[1]));
-        return r;
+        return { fecha: r, frecuencia: 0 };
     }
 
-    const matchDiaSemana = t.match(/(?:este|esta|proximo|próximo|proxima|próxima|el|que viene)\s*(lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo)/i);
+    const matchDiaSemana = t.match(/(?:este|esta|proximo|próximo|proxima|próxima|el|que viene|los|todos los|todos)\s*(lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo)/i);
     if (matchDiaSemana) {
         const diaNombre = matchDiaSemana[1].toLowerCase();
+        const prefix = matchDiaSemana[0].toLowerCase().split(/\s+/)[0];
         const diaTarget = DIAS_SEMANA[diaNombre];
         if (diaTarget !== undefined) {
             const diff = (diaTarget - hoy.getDay() + 7) % 7;
@@ -286,7 +287,8 @@ function parsearFechaVisita(texto) {
             } else {
                 r.setDate(r.getDate() + diff);
             }
-            return r;
+            const frecuencia = (prefix === 'los' || prefix === 'todos') ? 7 : 0;
+            return { fecha: r, frecuencia };
         }
     }
 
@@ -300,19 +302,19 @@ function parsearFechaVisita(texto) {
             if (y < 100) y += 2000;
         }
         const r = new Date(y, m, d);
-        if (!isNaN(r.getTime())) return r;
+        if (!isNaN(r.getTime())) return { fecha: r, frecuencia: 0 };
     }
 
     if (t.includes('proxima semana') || t.includes('proxima semana')) {
         const r = new Date(hoy);
         r.setDate(r.getDate() + 7);
-        return r;
+        return { fecha: r, frecuencia: 0 };
     }
 
     if (t === 'semana que viene' || t === 'la semana que viene') {
         const r = new Date(hoy);
         r.setDate(r.getDate() + 7);
-        return r;
+        return { fecha: r, frecuencia: 0 };
     }
 
     return null;
@@ -327,7 +329,7 @@ async function guardarVisita(from, datos) {
              (fecha_reg, rif, id_cliente, nombres, direccion, telefono, celular, id_vendedor, nombre, 
               direcciongooglemap, zona, visita_realizada, contador_visitas, motivo, logro, acuerdo_visita, 
               dias_frecuencia, interes_producto) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NO', 1, ?, 'NO', ?, 0, 'SI')`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NO', 1, ?, 'NO', ?, ?, 'SI')`,
             [
                 hoy,
                 datos.rif || '',
@@ -341,7 +343,8 @@ async function guardarVisita(from, datos) {
                 '',
                 datos.zona || '',
                 datos.motivo || 'Solicitud de visita por WhatsApp',
-                acuerdo
+                acuerdo,
+                datos.dias_frecuencia || 0
             ]
         );
         console.log(`[VISITA] ✅ Visita agendada para ${from}`);
@@ -1334,11 +1337,15 @@ async function startBot() {
                 if (dataVisita.esperando_fecha) {
                     const fechaParseada = parsearFechaVisita(rawText);
                     if (fechaParseada) {
-                        dataVisita.acuerdo_visita = fechaParseada;
+                        dataVisita.acuerdo_visita = fechaParseada.fecha;
+                        dataVisita.dias_frecuencia = fechaParseada.frecuencia || 0;
                         dataVisita.esperando_fecha = false;
                         dataVisita.esperando_confirmacion = true;
-                        const fechaStr = fechaParseada.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-                        await safeSendMessage(from, { text: `📅 Entendido, agendaremos la visita para el *${fechaStr}*.\n\n¿Confirmas que deseas agendar esta visita? Responde *SI* para confirmar o *NO* para cancelar.` });
+                        const fechaStr = fechaParseada.fecha.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+                        let msgFecha = `📅 Entendido, agendaremos la visita para el *${fechaStr}*.`;
+                        if (fechaParseada.frecuencia === 7) msgFecha += `\n🔄 La visita será *semanal* (todos los ${fechaParseada.fecha.toLocaleDateString('es-ES', { weekday: 'long' })}).`;
+                        msgFecha += `\n\n¿Confirmas que deseas agendar esta visita? Responde *SI* para confirmar o *NO* para cancelar.`;
+                        await safeSendMessage(from, { text: msgFecha });
                     } else if (confWords.includes(text) || cancelWords.includes(text)) {
                         if (cancelWords.includes(text)) {
                             agendaVisitas.delete(from);
@@ -1366,6 +1373,7 @@ async function startBot() {
                             const c = await buscarClientePorTelefono(from.split('@')[0]);
                             if (c) infoCliente = c;
                         }
+                        const frecuencia = dataVisita.dias_frecuencia || 0;
                         const exito = await guardarVisita(from, {
                             id_cliente: sesion?.id_cliente_int || infoCliente.id_cliente || 0,
                             nombres: infoCliente.nombres || pushName,
@@ -1377,10 +1385,14 @@ async function startBot() {
                             id_vendedor: vendedor?.id_vendedor || 0,
                             nombre_vendedor: vendedor?.nombre || '',
                             motivo: dataVisita.motivo || 'Solicitud de visita por WhatsApp',
-                            acuerdo_visita: dataVisita.acuerdo_visita || new Date()
+                            acuerdo_visita: dataVisita.acuerdo_visita || new Date(),
+                            dias_frecuencia: frecuencia
                         });
                         if (exito) {
-                            await safeSendMessage(from, { text: `✅ *Visita agendada con éxito!*\n\n📅 Fecha: *${fechaStr}*\n\nUn vendedor lo visitará en la fecha indicada. ¡Gracias por confiar en ONE4CARS! 🙏` });
+                            let msgExito = `✅ *Visita agendada con éxito!*\n\n📅 Fecha: *${fechaStr}*`;
+                            if (frecuencia === 7) msgExito += `\n🔄 Frecuencia: *Semanal*`;
+                            msgExito += `\n\nUn vendedor lo visitará en la fecha indicada. ¡Gracias por confiar en ONE4CARS! 🙏`;
+                            await safeSendMessage(from, { text: msgExito });
                             const adminJids = ADMIN_IDS.map(id => formatWhatsApp(id)).filter(Boolean);
                             for (const aj of adminJids) {
                                 await safeSendMessage(aj, { text: `📢 *NUEVA VISITA AGENDADA*\nCliente: ${infoCliente.nombres || pushName}\nTel: ${from.split('@')[0]}\nFecha: ${fechaStr}\nVendedor: ${vendedor?.nombre || 'Sin asignar'}\nMotivo: ${dataVisita.motivo || 'Solicitud de visita'}` });
@@ -1403,6 +1415,24 @@ async function startBot() {
             if (!esRIFPuro && !menuOption) {
                 const esIntencionVisita = detectarVisita(rawText, text);
                 if (esIntencionVisita) {
+                    const fechaYaParseada = parsearFechaVisita(rawText);
+                    if (fechaYaParseada) {
+                        agendaVisitas.set(from, {
+                            esperando_fecha: false,
+                            esperando_confirmacion: true,
+                            acuerdo_visita: fechaYaParseada.fecha,
+                            dias_frecuencia: fechaYaParseada.frecuencia || 0,
+                            motivo: rawText,
+                            nombres: vendedor ? vendedor.nombre : pushName
+                        });
+                        await setModo(from, 'visitando');
+                        const fechaStr = fechaYaParseada.fecha.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+                        let msgFecha = `Entiendo que deseas agendar una visita. 🚗\n\n📅 Propongo agendar para el *${fechaStr}*.`;
+                        if (fechaYaParseada.frecuencia === 7) msgFecha += `\n🔄 Será una visita *semanal* (todos los ${fechaYaParseada.fecha.toLocaleDateString('es-ES', { weekday: 'long' })}).`;
+                        msgFecha += `\n\n¿Confirmas? Responde *SI* para confirmar o *NO* para cancelar.`;
+                        await safeSendMessage(from, { text: msgFecha });
+                        return;
+                    }
                     if (sesion && sesion.modo === 'visitando') {
                         agendaVisitas.set(from, {
                             esperando_fecha: true,
