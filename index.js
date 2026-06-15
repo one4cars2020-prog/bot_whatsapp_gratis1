@@ -91,7 +91,7 @@ const MENU_INTENTIONS = {
         response: `8️⃣ *Seguimiento Despacho:* https://www.one4cars.com/despacho.php/`
     },
     '9': {
-        keywords: ['asesor humano', 'hablar con un operador', 'soporte humano', 'quiero hablar con alguien', 'ayuda de un operador'],
+        keywords: ['asesor humano', 'hablar con un operador', 'soporte humano', 'quiero hablar con alguien', 'ayuda de un operador', 'contactar asesor', 'contacta un asesor', 'asesor de filtros', 'asesor se comunique', 'hablar con asesor', 'operador humano', 'comuniquen con un asesor', 'comunique con un asesor', 'asesor me contacte'],
         response: `9️⃣ *Asesor Humano:* Indique su duda y un operador revisará el caso pronto. 👩‍💻`
     }
 };
@@ -108,14 +108,22 @@ const VISIT_KEYWORDS = [
     'me visite', 'me visiten', 'me visita', 'pase por', 'pasar por',
     'venga a', 'vengan a', 'viene a', 'vienen a', 'pasen por',
     'que pase', 'que pasen', 'el vendedor', 'lo vendedore',
-    'me vea', 'me vean', 'hacer una visita', 'agendar visita',
-    'programar visita', 'quiero visita', 'necesito visita',
+    'me vea', 'me vean', 'hacer una visita', 'agendar visita', 'agendar una visita',
+    'programar visita', 'programar una visita', 'quiero visita', 'necesito visita',
     'no me visita', 'no me visitan', 'tiempo que no me visita',
     'venga a verme', 'vengan a verme', 'pase a verme',
     'pasar a cobrar', 'paso a cobrar', 'pase a cobrar',
     'cobrar', 'cuando puede', 'cuando puedas',
     'proximo', 'visiten', 'visitar', 'visitarme',
-    'pases por', 'pase por el', 'pasas por', 'pasar por el'
+    'pases por', 'pase por el', 'pasas por', 'pasar por el',
+    'una visita', 'solicito visita', 'requiero visita',
+    'me comunique', 'se comunique', 'asesor me visite',
+    'quiero que me visiten', 'necesito que me visiten',
+    'pueden visitarme', 'pueden pasar', 'puede pasar',
+    'agendarme una visita', 'visita domicilio', 'visita domiciliaria',
+    'vendedor me visite', 'vendedor me visiten',
+    'asesor se comunique conmigo', 'comunique conmigo',
+    'contactar para una visita', 'coordinar visita'
 ];
 
 const DIAS_SEMANA = {
@@ -1142,6 +1150,35 @@ async function startBot() {
                     });
                     listado += `💰 *TOTAL A PAGAR: $${totalP.toFixed(2)}*`;
                     return await safeSendMessage(from, { text: listado });
+                }
+                if (menuOption.includes('Asesor Humano') && detectarVisita(rawText, text)) {
+                    let infoCliente = { nombres: pushName, celular: from.split('@')[0] };
+                    if (sesion?.id_cliente_int) {
+                        const c = await pool.execute("SELECT * FROM tab_clientes WHERE id_cliente = ?", [sesion.id_cliente_int]);
+                        if (c[0] && c[0][0]) infoCliente = c[0][0];
+                    } else {
+                        const c = await buscarClientePorTelefono(from.split('@')[0]);
+                        if (c) infoCliente = c;
+                    }
+                    await guardarVisita(from, {
+                        id_cliente: sesion?.id_cliente_int || infoCliente.id_cliente || 0,
+                        nombres: infoCliente.nombres || pushName,
+                        celular: infoCliente.celular || from.split('@')[0],
+                        telefono: infoCliente.telefono || '',
+                        direccion: infoCliente.direccion || '',
+                        zona: infoCliente.zona || '',
+                        rif: infoCliente.rif || '',
+                        id_vendedor: vendedor?.id_vendedor || 0,
+                        nombre_vendedor: vendedor?.nombre || '',
+                        motivo: 'Solicitud de visita: ' + rawText.substring(0, 100),
+                        acuerdo_visita: new Date()
+                    });
+                    const adminJids = ADMIN_IDS.map(id => formatWhatsApp(id)).filter(Boolean);
+                    for (const aj of adminJids) {
+                        await safeSendMessage(aj, { text: `📢 *VISITA SOLICITADA DESDE MENSAJE*\nCliente: ${infoCliente.nombres || pushName}\nTel: ${from.split('@')[0]}\nMensaje: ${rawText.substring(0, 200)}` });
+                    }
+                    const respExtendida = `${menuOption}\n\n📅 *Nota:* Hemos detectado que solicitas una visita. La hemos agendado automáticamente para que un operador te contacte pronto.`;
+                    return await safeSendMessage(from, { text: respExtendida });
                 }
                 return await safeSendMessage(from, { text: menuOption });
             }
