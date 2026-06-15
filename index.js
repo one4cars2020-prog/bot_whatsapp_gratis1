@@ -1723,7 +1723,17 @@ const server = http.createServer(async (req, res) => {
         const rows = msgs.map(m => `<tr><td>${m.telefono}</td><td class="${m.rol === 'user' ? 'text-primary' : 'text-success'}">${m.rol}</td><td style="max-width:400px;word-break:break-word">${m.contenido}</td><td>${new Date(m.fecha).toLocaleString()}</td></tr>`).join('');
         res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Historial Chat</title></head><body class="bg-light">${header}<div class="container mt-3"><h3>💬 Historial de Conversaciones</h3><div class="table-responsive"><table class="table table-sm table-striped"><thead><tr><th>Teléfono</th><th>Rol</th><th>Mensaje</th><th>Fecha</th></tr></thead><tbody>${rows}</tbody></table></div><a href="/" class="btn btn-outline-secondary">Volver</a></div></body></html>`);
     } else if (routename === '/visitas') {
-        const [visitas] = await pool.execute("SELECT * FROM tab_visitas ORDER BY acuerdo_visita DESC LIMIT 100");
+        const filtroZona = parsedUrl.searchParams.get('zona') || '';
+        const filtroFechaDesde = parsedUrl.searchParams.get('fecha_desde') || '';
+        const filtroFechaHasta = parsedUrl.searchParams.get('fecha_hasta') || '';
+        let where = [];
+        let params = [];
+        if (filtroZona) { where.push("zona = ?"); params.push(filtroZona); }
+        if (filtroFechaDesde) { where.push("acuerdo_visita >= ?"); params.push(filtroFechaDesde); }
+        if (filtroFechaHasta) { where.push("acuerdo_visita <= ?"); params.push(filtroFechaHasta); }
+        const whereClause = where.length ? "WHERE " + where.join(" AND ") : "";
+        const [zonas] = await pool.execute("SELECT DISTINCT zona FROM tab_visitas WHERE zona != '' ORDER BY zona");
+        const [visitas] = await pool.execute("SELECT * FROM tab_visitas " + whereClause + " ORDER BY acuerdo_visita DESC LIMIT 100", params);
         const rows = visitas.map(v => `<tr>
             <td>${v.id_visita}</td>
             <td>${v.fecha_reg || ''}</td>
@@ -1734,7 +1744,30 @@ const server = http.createServer(async (req, res) => {
             <td>${v.motivo || ''}</td>
             <td>${v.visita_realizada}</td>
         </tr>`).join('');
-        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Visitas Agendadas</title></head><body class="bg-light">${header}<div class="container mt-3"><h3>📅 Visitas Agendadas</h3><div class="table-responsive"><table class="table table-sm table-striped"><thead><tr><th>ID</th><th>Fecha Reg.</th><th>Cliente</th><th>Celular</th><th>Vendedor</th><th>Acuerdo Visita</th><th>Motivo</th><th>Realizada</th></tr></thead><tbody>${rows}</tbody></table><a href="/" class="btn btn-outline-secondary">Volver</a></div></div></body></html>`);
+        const zonaOptions = zonas.map(z => `<option value="${z.zona}"${filtroZona === z.zona ? ' selected' : ''}>${z.zona}</option>`).join('');
+        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Visitas Agendadas</title></head><body class="bg-light">${header}<div class="container mt-3"><h3>📅 Visitas Agendadas</h3>
+        <form class="row g-2 mb-3 p-3 bg-white rounded shadow-sm align-items-end" method="GET" action="/visitas">
+            <div class="col-auto">
+                <label class="form-label small mb-1">Zona</label>
+                <select name="zona" class="form-select form-select-sm" onchange="this.form.submit()">
+                    <option value="">Todas</option>
+                    ${zonaOptions}
+                </select>
+            </div>
+            <div class="col-auto">
+                <label class="form-label small mb-1">Fecha Desde</label>
+                <input type="date" name="fecha_desde" class="form-control form-control-sm" value="${filtroFechaDesde}">
+            </div>
+            <div class="col-auto">
+                <label class="form-label small mb-1">Fecha Hasta</label>
+                <input type="date" name="fecha_hasta" class="form-control form-control-sm" value="${filtroFechaHasta}">
+            </div>
+            <div class="col-auto d-flex align-items-end gap-1">
+                <button type="submit" class="btn btn-sm btn-primary">Filtrar</button>
+                <a href="/visitas" class="btn btn-sm btn-outline-secondary">Limpiar</a>
+            </div>
+        </form>
+        <div class="table-responsive"><table class="table table-sm table-striped"><thead><tr><th>ID</th><th>Fecha Reg.</th><th>Cliente</th><th>Celular</th><th>Vendedor</th><th>Acuerdo Visita</th><th>Motivo</th><th>Realizada</th></tr></thead><tbody>${rows}</tbody></table><a href="/" class="btn btn-outline-secondary">Volver</a></div></div></body></html>`);
     } else if (routename === '/recordatorio-estado') {
         const facturas = await notificador.obtenerFacturasVencidas();
         const enviados = await notificador.obtenerRecordatoriosEnviados();
