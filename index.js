@@ -101,6 +101,27 @@ let socketBot = null;
 let dolarInfo = { bcv: 'Cargando...', paralelo: 'Cargando...' };
 let notificadorInterval = null;
 const pendientesConfirmacion = new Map();
+const carritoCompras = new Map();
+const agendaVisitas = new Map();
+
+const VISIT_KEYWORDS = [
+    'me visite', 'me visiten', 'me visita', 'pase por', 'pasar por',
+    'venga a', 'vengan a', 'viene a', 'vienen a', 'pasen por',
+    'que pase', 'que pasen', 'el vendedor', 'lo vendedore',
+    'me vea', 'me vean', 'hacer una visita', 'agendar visita',
+    'programar visita', 'quiero visita', 'necesito visita',
+    'no me visita', 'no me visitan', 'tiempo que no me visita',
+    'venga a verme', 'vengan a verme', 'pase a verme',
+    'pasar a cobrar', 'paso a cobrar', 'pase a cobrar',
+    'cobrar', 'cuando puede', 'cuando puedas',
+    'proximo', 'visiten', 'visitar', 'visitarme',
+    'pases por', 'pase por el', 'pasas por', 'pasar por el'
+];
+
+const DIAS_SEMANA = {
+    'lunes': 1, 'martes': 2, 'miercoles': 3, 'miércoles': 3,
+    'jueves': 4, 'viernes': 5, 'sabado': 6, 'sábado': 6, 'domingo': 0
+};
 
 // ===== FUNCIONES DE APOYO =====
 
@@ -197,6 +218,143 @@ function detectarIntencionMenu(texto) {
     return null;
 }
 
+function detectarVisita(rawText, text) {
+    if (!rawText) return false;
+    const t = text || normalizar(rawText);
+    for (const kw of VISIT_KEYWORDS) {
+        if (t.includes(kw)) return true;
+    }
+    return false;
+}
+
+function parsearFechaVisita(texto) {
+    const t = normalizar(texto);
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+
+    if (t === 'hoy' || t.includes('ahora') || t === 'ya') return new Date(hoy);
+
+    if (t.includes('manana') && !t.includes('pasado')) {
+        const r = new Date(hoy);
+        r.setDate(r.getDate() + 1);
+        return r;
+    }
+    if (t.includes('pasado manana') || t.includes('pasado mañana')) {
+        const r = new Date(hoy);
+        r.setDate(r.getDate() + 2);
+        return r;
+    }
+
+    const matchNumDias = t.match(/(\d+)\s*(?:dias|día|dia)/);
+    if (matchNumDias) {
+        const r = new Date(hoy);
+        r.setDate(r.getDate() + parseInt(matchNumDias[1]));
+        return r;
+    }
+
+    const matchSemana = t.match(/(\d+)\s*(?:semanas|semana)/);
+    if (matchSemana) {
+        const r = new Date(hoy);
+        r.setDate(r.getDate() + parseInt(matchSemana[1]) * 7);
+        return r;
+    }
+
+    const matchMes = t.match(/(\d+)\s*(?:meses|mes)/);
+    if (matchMes) {
+        const r = new Date(hoy);
+        r.setMonth(r.getMonth() + parseInt(matchMes[1]));
+        return r;
+    }
+
+    const matchDiaSemana = t.match(/(?:este|esta|proximo|próximo|proxima|próxima|el|que viene)\s*(lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo)/i);
+    if (matchDiaSemana) {
+        const diaNombre = matchDiaSemana[1].toLowerCase();
+        const diaTarget = DIAS_SEMANA[diaNombre];
+        if (diaTarget !== undefined) {
+            const diff = (diaTarget - hoy.getDay() + 7) % 7;
+            const r = new Date(hoy);
+            if (diff === 0) {
+                r.setDate(r.getDate() + 7);
+            } else {
+                r.setDate(r.getDate() + diff);
+            }
+            return r;
+        }
+    }
+
+    const matchFechaNum = t.match(/(\d{1,2})\s*(?:\/|-)\s*(\d{1,2})(?:\s*(?:\/|-)\s*(\d{2,4}))?/);
+    if (matchFechaNum) {
+        const d = parseInt(matchFechaNum[1]);
+        const m = parseInt(matchFechaNum[2]) - 1;
+        let y = hoy.getFullYear();
+        if (matchFechaNum[3]) {
+            y = parseInt(matchFechaNum[3]);
+            if (y < 100) y += 2000;
+        }
+        const r = new Date(y, m, d);
+        if (!isNaN(r.getTime())) return r;
+    }
+
+    if (t.includes('proxima semana') || t.includes('proxima semana')) {
+        const r = new Date(hoy);
+        r.setDate(r.getDate() + 7);
+        return r;
+    }
+
+    if (t === 'semana que viene' || t === 'la semana que viene') {
+        const r = new Date(hoy);
+        r.setDate(r.getDate() + 7);
+        return r;
+    }
+
+    return null;
+}
+
+async function guardarVisita(from, datos) {
+    try {
+        const hoy = new Date().toISOString().split('T')[0];
+        const acuerdo = datos.acuerdo_visita ? datos.acuerdo_visita.toISOString().split('T')[0] : hoy;
+        await pool.execute(
+            `INSERT INTO tab_visitas 
+             (fecha_reg, rif, id_cliente, nombres, direccion, telefono, celular, id_vendedor, nombre, 
+              direcciongooglemap, zona, visita_realizada, contador_visitas, motivo, logro, acuerdo_visita, 
+              dias_frecuencia, interes_producto) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NO', 1, ?, 'NO', ?, 0, 'SI')`,
+            [
+                hoy,
+                datos.rif || '',
+                datos.id_cliente || 0,
+                datos.nombres || 'Cliente WhatsApp',
+                datos.direccion || '',
+                datos.telefono || '',
+                datos.celular || from.split('@')[0],
+                datos.id_vendedor || 0,
+                datos.nombre_vendedor || '',
+                '',
+                datos.zona || '',
+                datos.motivo || 'Solicitud de visita por WhatsApp',
+                acuerdo
+            ]
+        );
+        console.log(`[VISITA] ✅ Visita agendada para ${from}`);
+        return true;
+    } catch (e) {
+        console.log("[VISITA] Error al guardar:", e.message);
+        return false;
+    }
+}
+
+async function buscarClientePorTelefono(tel) {
+    const telLimpio = tel.replace(/\D/g, '');
+    try {
+        const [r] = await pool.execute(
+            "SELECT id_cliente, nombres, cedula, celular, telefono, direccion, zona, clave as rif, vendedor FROM tab_clientes WHERE REPLACE(celular, ' ', '') LIKE ? OR REPLACE(telefono, ' ', '') LIKE ? LIMIT 1",
+            [`%${telLimpio}%`, `%${telLimpio}%`]
+        );
+        return r[0] || null;
+    } catch (e) { return null; }
+}
+
 // ===== BASE DE DATOS =====
 async function initDB() {
     try {
@@ -232,6 +390,28 @@ async function initDB() {
         await pool.execute(`CREATE TABLE IF NOT EXISTS envio_estadisticas_log (
             id INT AUTO_INCREMENT PRIMARY KEY,
             fecha_envio DATE NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci`);
+
+        await pool.execute(`CREATE TABLE IF NOT EXISTS tab_visitas (
+            id_visita INT AUTO_INCREMENT PRIMARY KEY,
+            fecha_reg DATE NOT NULL,
+            rif VARCHAR(50) DEFAULT '',
+            id_cliente INT DEFAULT 0,
+            nombres VARCHAR(150) DEFAULT '',
+            direccion VARCHAR(200) DEFAULT '',
+            telefono VARCHAR(50) DEFAULT '',
+            celular VARCHAR(50) DEFAULT '',
+            id_vendedor INT DEFAULT 0,
+            nombre VARCHAR(100) DEFAULT '',
+            direcciongooglemap VARCHAR(150) DEFAULT '',
+            zona VARCHAR(150) DEFAULT '',
+            visita_realizada VARCHAR(10) DEFAULT 'NO',
+            contador_visitas INT DEFAULT 1,
+            motivo VARCHAR(100) DEFAULT '',
+            logro VARCHAR(10) DEFAULT 'NO',
+            acuerdo_visita DATE DEFAULT NULL,
+            dias_frecuencia INT DEFAULT 0,
+            interes_producto VARCHAR(10) DEFAULT 'SI'
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci`);
         
         console.log("✅ Base de Datos vinculada.");
@@ -983,17 +1163,17 @@ async function startBot() {
             const lineas = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
             const itemsPedido = [];
             for (const linea of lineas) {
-                let match = linea.match(/^\s*([A-Za-z0-9]{3,})(?:\s+[-=]?\s*|[-=]\s*)(\d{1,4})\s*$/);
+                let match = linea.match(/^\s*([A-Za-z0-9]{3,})(?:\s+[-=]?\s*|[-=]\s*)(\d{1,4})(?:\s+(?:piezas?|und|unidad(?:es)?|uds?|unid\.?))?\s*$/i);
                 if (match) {
                     itemsPedido.push({ codigo: match[1].toUpperCase(), cantidad: parseInt(match[2]) });
                     continue;
                 }
-                match = linea.match(/^\s*(\d{1,4})(?:\s+[-=]?\s*|[-=]\s*)([A-Za-z0-9]{3,})\s*$/);
+                match = linea.match(/^\s*(\d{1,4})(?:\s+[-=]?\s*|[-=]\s*)([A-Za-z0-9]{3,})(?:\s+(?:piezas?|und|unidad(?:es)?|uds?|unid\.?))?\s*$/i);
                 if (match) {
                     itemsPedido.push({ codigo: match[2].toUpperCase(), cantidad: parseInt(match[1]) });
                     continue;
                 }
-                match = linea.match(/^\s*([A-Za-z0-9]{3,})\s*$/);
+                match = linea.match(/^\s*([A-Za-z0-9]{3,})(?:\s+(?:piezas?|und|unidad(?:es)?|uds?|unid\.?))?\s*$/i);
                 if (match) {
                     const cod = match[1].toUpperCase();
                     if (/[A-Z]/.test(cod) && /[0-9]/.test(cod)) {
@@ -1001,13 +1181,26 @@ async function startBot() {
                     }
                     continue;
                 }
-                match = linea.match(/^\s*(.+?)\s+[-=]?\s*(\d{1,4})\s*$/);
+                match = linea.match(/^\s*(.+?)\s+[-=]?\s*(\d{1,4})(?:\s+(?:piezas?|und|unidad(?:es)?|uds?|unid\.?))?\s*$/i);
                 if (match && match[1].length >= 4) {
                     const txtDesc = match[1].trim();
                     const qty = parseInt(match[2]);
-                    const prodDesc = await buscarProductoPorTexto(txtDesc);
-                    if (prodDesc && prodDesc.length > 0) {
-                        itemsPedido.push({ codigo: prodDesc[0].producto, cantidad: qty });
+                    let foundByCode = null;
+                    const palabrasDesc = txtDesc.split(/\s+/);
+                    for (const pd of palabrasDesc) {
+                        const codCandidato = pd.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+                        if (codCandidato.length >= 4 && /[A-Z]/.test(codCandidato) && /[0-9]/.test(codCandidato)) {
+                            foundByCode = await buscarProductoPorCodigo(codCandidato);
+                            if (foundByCode) break;
+                        }
+                    }
+                    if (foundByCode) {
+                        itemsPedido.push({ codigo: foundByCode[0].producto, cantidad: qty });
+                    } else {
+                        const prodDesc = await buscarProductoPorTexto(txtDesc);
+                        if (prodDesc && prodDesc.length > 0) {
+                            itemsPedido.push({ codigo: prodDesc[0].producto, cantidad: qty });
+                        }
                     }
                 }
             }
@@ -1091,6 +1284,107 @@ async function startBot() {
                     pendientesConfirmacion.delete(from);
                     await setModo(from, 'bot');
                     await safeSendMessage(from, { text: "❌ Pedido cancelado." });
+                    return;
+                }
+            }
+
+            // --- CONFIRMACIÓN DE VISITA ---
+            if (agendaVisitas.has(from) && sesion && sesion.modo === 'visitando') {
+                const dataVisita = agendaVisitas.get(from);
+                const confWords = ['si', 'sí', 'confirmo', 'confirmar', 'dale', 'ok', 'okey', 'claro', 'simon', 'confirmado', 'yes', 'adelante'];
+                const cancelWords = ['no', 'nop', 'cancelar', 'cancela', 'ninguno', 'nunca'];
+
+                if (dataVisita.esperando_fecha) {
+                    const fechaParseada = parsearFechaVisita(rawText);
+                    if (fechaParseada) {
+                        dataVisita.acuerdo_visita = fechaParseada;
+                        dataVisita.esperando_fecha = false;
+                        dataVisita.esperando_confirmacion = true;
+                        const fechaStr = fechaParseada.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+                        await safeSendMessage(from, { text: `📅 Entendido, agendaremos la visita para el *${fechaStr}*.\n\n¿Confirmas que deseas agendar esta visita? Responde *SI* para confirmar o *NO* para cancelar.` });
+                    } else if (confWords.includes(text) || cancelWords.includes(text)) {
+                        if (cancelWords.includes(text)) {
+                            agendaVisitas.delete(from);
+                            await setModo(from, 'bot');
+                            await safeSendMessage(from, { text: "❌ Solicitud de visita cancelada. Si en otro momento necesitas asistencia, aquí estamos." });
+                            return;
+                        }
+                        await safeSendMessage(from, { text: "Por favor, indícame una fecha válida. Ejemplos: *hoy*, *mañana*, *el jueves*, *en 15 días*, *el próximo lunes*." });
+                    } else {
+                        await safeSendMessage(from, { text: "No entendí la fecha. Por favor indícame un día. Ej: *hoy*, *mañana*, *el jueves*, *en 15 días*." });
+                    }
+                    return;
+                }
+
+                if (dataVisita.esperando_confirmacion) {
+                    if (confWords.includes(text)) {
+                        const fechaStr = dataVisita.acuerdo_visita ? dataVisita.acuerdo_visita.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) : 'Pendiente';
+                        let infoCliente = { nombres: dataVisita.nombres || pushName, celular: from.split('@')[0] };
+                        if (sesion?.id_cliente_int) {
+                            const c = await pool.execute("SELECT * FROM tab_clientes WHERE id_cliente = ?", [sesion.id_cliente_int]);
+                            if (c[0] && c[0][0]) {
+                                infoCliente = c[0][0];
+                            }
+                        } else {
+                            const c = await buscarClientePorTelefono(from.split('@')[0]);
+                            if (c) infoCliente = c;
+                        }
+                        const exito = await guardarVisita(from, {
+                            id_cliente: sesion?.id_cliente_int || infoCliente.id_cliente || 0,
+                            nombres: infoCliente.nombres || pushName,
+                            celular: infoCliente.celular || from.split('@')[0],
+                            telefono: infoCliente.telefono || '',
+                            direccion: infoCliente.direccion || '',
+                            zona: infoCliente.zona || '',
+                            rif: infoCliente.rif || '',
+                            id_vendedor: vendedor?.id_vendedor || 0,
+                            nombre_vendedor: vendedor?.nombre || '',
+                            motivo: dataVisita.motivo || 'Solicitud de visita por WhatsApp',
+                            acuerdo_visita: dataVisita.acuerdo_visita || new Date()
+                        });
+                        if (exito) {
+                            await safeSendMessage(from, { text: `✅ *Visita agendada con éxito!*\n\n📅 Fecha: *${fechaStr}*\n\nUn vendedor lo visitará en la fecha indicada. ¡Gracias por confiar en ONE4CARS! 🙏` });
+                            const adminJids = ADMIN_IDS.map(id => formatWhatsApp(id)).filter(Boolean);
+                            for (const aj of adminJids) {
+                                await safeSendMessage(aj, { text: `📢 *NUEVA VISITA AGENDADA*\nCliente: ${infoCliente.nombres || pushName}\nTel: ${from.split('@')[0]}\nFecha: ${fechaStr}\nVendedor: ${vendedor?.nombre || 'Sin asignar'}\nMotivo: ${dataVisita.motivo || 'Solicitud de visita'}` });
+                            }
+                        } else {
+                            await safeSendMessage(from, { text: "❌ Ocurrió un error al agendar la visita. Por favor intenta de nuevo o contacta a un administrador." });
+                        }
+                        agendaVisitas.delete(from);
+                        await setModo(from, 'bot');
+                    } else if (cancelWords.includes(text)) {
+                        agendaVisitas.delete(from);
+                        await setModo(from, 'bot');
+                        await safeSendMessage(from, { text: "❌ Solicitud de visita cancelada." });
+                    }
+                    return;
+                }
+            }
+
+            // --- DETECCIÓN DE INTENCIÓN DE VISITA ---
+            if (!esRIFPuro && !menuOption) {
+                const esIntencionVisita = detectarVisita(rawText, text);
+                if (esIntencionVisita) {
+                    if (sesion && sesion.modo === 'visitando') {
+                        agendaVisitas.set(from, {
+                            esperando_fecha: true,
+                            esperando_confirmacion: false,
+                            motivo: rawText,
+                            nombres: vendedor ? vendedor.nombre : pushName
+                        });
+                        await setModo(from, 'visitando');
+                        await safeSendMessage(from, { text: `Entiendo que deseas agendar una visita. 🚗\n\n¿Para qué día te gustaría que pasemos? Puedes decirme: *hoy*, *mañana*, *el jueves*, *en 15 días*, o la fecha que prefieras.` });
+                        return;
+                    }
+                    agendaVisitas.set(from, {
+                        esperando_fecha: true,
+                        esperando_confirmacion: false,
+                        motivo: rawText,
+                        nombres: vendedor ? vendedor.nombre : pushName
+                    });
+                    await setModo(from, 'visitando');
+                    await safeSendMessage(from, { text: `Entiendo que deseas agendar una visita. 🚗\n\n¿Para qué día te gustaría que pasemos? Puedes decirme: *hoy*, *mañana*, *el jueves*, *en 15 días*, o la fecha que prefieras.` });
                     return;
                 }
             }
@@ -1361,12 +1655,25 @@ const server = http.createServer(async (req, res) => {
         const [msgs] = await pool.execute("SELECT h.id, h.telefono, h.rol, h.contenido, h.fecha FROM historial_chat h ORDER BY h.fecha DESC LIMIT 200");
         const rows = msgs.map(m => `<tr><td>${m.telefono}</td><td class="${m.rol === 'user' ? 'text-primary' : 'text-success'}">${m.rol}</td><td style="max-width:400px;word-break:break-word">${m.contenido}</td><td>${new Date(m.fecha).toLocaleString()}</td></tr>`).join('');
         res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Historial Chat</title></head><body class="bg-light">${header}<div class="container mt-3"><h3>💬 Historial de Conversaciones</h3><div class="table-responsive"><table class="table table-sm table-striped"><thead><tr><th>Teléfono</th><th>Rol</th><th>Mensaje</th><th>Fecha</th></tr></thead><tbody>${rows}</tbody></table></div><a href="/" class="btn btn-outline-secondary">Volver</a></div></body></html>`);
+    } else if (routename === '/visitas') {
+        const [visitas] = await pool.execute("SELECT * FROM tab_visitas ORDER BY acuerdo_visita DESC LIMIT 100");
+        const rows = visitas.map(v => `<tr>
+            <td>${v.id_visita}</td>
+            <td>${v.fecha_reg || ''}</td>
+            <td>${v.nombres || ''}</td>
+            <td>${v.celular || ''}</td>
+            <td>${v.nombre || ''}</td>
+            <td>${v.acuerdo_visita || ''}</td>
+            <td>${v.motivo || ''}</td>
+            <td>${v.visita_realizada}</td>
+        </tr>`).join('');
+        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Visitas Agendadas</title></head><body class="bg-light">${header}<div class="container mt-3"><h3>📅 Visitas Agendadas</h3><div class="table-responsive"><table class="table table-sm table-striped"><thead><tr><th>ID</th><th>Fecha Reg.</th><th>Cliente</th><th>Celular</th><th>Vendedor</th><th>Acuerdo Visita</th><th>Motivo</th><th>Realizada</th></tr></thead><tbody>${rows}</tbody></table><a href="/" class="btn btn-outline-secondary">Volver</a></div></div></body></html>`);
     } else if (routename === '/recordatorio-estado') {
         const facturas = await notificador.obtenerFacturasVencidas();
         const enviados = await notificador.obtenerRecordatoriosEnviados();
         res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Recordatorios</title></head><body class="bg-light">${header}<div class="container mt-5"><div class="card shadow-lg p-4 mx-auto" style="max-width: 800px; border-radius: 15px;"><h3>📅 Recordatorios</h3><hr><table class="table table-sm"><thead><tr><th>Factura</th><th>Cliente</th><th>Días</th><th>Estado</th></tr></thead><tbody>${facturas.map(f => `<tr><td>${f.nro_factura}</td><td>${f.nombres}</td><td>${f.dias_vencida}</td><td>${(enviados[f.id_factura]) ? '✅' : '⏳'}</td></tr>`).join('')}</tbody></table><a href="/" class="btn btn-outline-secondary">Volver</a></div></div></body></html>`);
     } else {
-        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="30"><title>Admin ONE4CARS</title></head><body style="background-color: #f4f7f6;">${header}<div class="container text-center"><div class="card shadow-lg p-4 mx-auto" style="max-width: 500px; border-radius: 15px;"><h4 class="mb-3">Estado del Bot</h4><div class="my-4">${qrCodeData.startsWith('data') ? `<img src="${qrCodeData}" class="img-fluid rounded" style="max-width: 250px;">` : `<h2 class="text-success">${qrCodeData}</h2>`}</div><p>BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}</p><div class="d-grid gap-2"><a href="/cobranza" class="btn btn-primary">PANEL DE COBRANZA</a><a href="/marketing-panel" class="btn btn-info text-white">PANEL DE MARKETING</a><a href="/notificador-estado" class="btn btn-secondary text-white">NOTIFICADOR</a><a href="/historial" class="btn btn-info text-white">HISTORIAL</a><a href="/recordatorio-estado" class="btn btn-warning text-dark">RECORDATORIOS</a></div></div></div></body></html>`);
+        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="30"><title>Admin ONE4CARS</title></head><body style="background-color: #f4f7f6;">${header}<div class="container text-center"><div class="card shadow-lg p-4 mx-auto" style="max-width: 500px; border-radius: 15px;"><h4 class="mb-3">Estado del Bot</h4><div class="my-4">${qrCodeData.startsWith('data') ? `<img src="${qrCodeData}" class="img-fluid rounded" style="max-width: 250px;">` : `<h2 class="text-success">${qrCodeData}</h2>`}</div><p>BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}</p><div class="d-grid gap-2"><a href="/cobranza" class="btn btn-primary">PANEL DE COBRANZA</a><a href="/marketing-panel" class="btn btn-info text-white">PANEL DE MARKETING</a><a href="/notificador-estado" class="btn btn-secondary text-white">NOTIFICADOR</a><a href="/historial" class="btn btn-info text-white">HISTORIAL</a><a href="/recordatorio-estado" class="btn btn-warning text-dark">RECORDATORIOS</a><a href="/visitas" class="btn btn-success text-white">📅 VISITAS</a></div></div></div></body></html>`);
     }
 });
 
