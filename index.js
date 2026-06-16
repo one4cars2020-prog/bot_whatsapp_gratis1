@@ -1084,10 +1084,20 @@ async function checkRecordatorioVisitaSemanal(force = false) {
             SELECT DISTINCT c.id_cliente, c.nombres, c.celular, c.telefono, c.direccion, c.zona,
                    v.id_vendedor, v.nombre as vendedor_nombre, v.celular_vendedor
             FROM tab_clientes c
-            JOIN tab_facturas f ON f.id_cliente = c.id_cliente
-            LEFT JOIN tab_vendedores v ON c.vendedor = v.nombre OR f.id_vendedor = v.id_vendedor
-            WHERE f.pagada = 'NO' AND f.anulado = 'no'
+            LEFT JOIN tab_vendedores v ON c.vendedor = v.nombre
+            WHERE c.activo = 'si'
+              AND EXISTS (
+                SELECT 1 FROM tab_facturas f
+                WHERE f.id_cliente = c.id_cliente
+                  AND f.anulado = 'no'
                   AND DATEDIFF(CURDATE(), f.fecha_reg) >= 45
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM tab_facturas f
+                WHERE f.id_cliente = c.id_cliente
+                  AND f.anulado = 'no'
+                  AND f.pagada = 'NO'
+              )
         `);
 
         let cont = 0;
@@ -1140,7 +1150,7 @@ Estaremos encantados de coordinar una visita para conocer tus necesidades en det
                     [
                         hoyStr, '', c.id_cliente, c.nombres, c.direccion || '', c.telefono || '',
                         c.celular, c.id_vendedor || 0, vendedorNombre, '', c.zona || '',
-                        'Recordatorio automático: visita sugerida por facturas vencidas (+45 días)', acuerdo
+                        'Recordatorio comercial: visita de seguimiento y atención al cliente', acuerdo
                     ]
                 );
 
@@ -1179,7 +1189,7 @@ async function checkRecordatorioVisitaSemanalPorIds(ids) {
                    v.id_vendedor, v.nombre as vendedor_nombre, v.celular_vendedor
             FROM tab_clientes c
             LEFT JOIN tab_vendedores v ON c.vendedor = v.nombre
-            WHERE c.id_cliente = ? LIMIT 1
+            WHERE c.id_cliente = ? AND c.activo = 'si' LIMIT 1
         `, [id]);
         const c = clientes[0];
         if (!c) continue;
@@ -1199,7 +1209,7 @@ async function checkRecordatorioVisitaSemanalPorIds(ids) {
             acuerdo.setDate(acuerdo.getDate() + 3);
             await pool.execute(
                 `INSERT INTO tab_visitas (fecha_reg, rif, id_cliente, nombres, direccion, telefono, celular, id_vendedor, nombre, direcciongooglemap, zona, visita_realizada, contador_visitas, motivo, logro, acuerdo_visita, dias_frecuencia, interes_producto) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NO', 1, ?, 'NO', ?, 0, 'SI')`,
-                [hoyStr, '', c.id_cliente, c.nombres, c.direccion || '', c.telefono || '', c.celular, c.id_vendedor || 0, vendedorNombre, '', c.zona || '', 'Recordatorio automático: visita sugerida por facturas vencidas (+45 días)', acuerdo]
+                [hoyStr, '', c.id_cliente, c.nombres, c.direccion || '', c.telefono || '', c.celular, c.id_vendedor || 0, vendedorNombre, '', c.zona || '', 'Recordatorio comercial: visita de seguimiento y atención al cliente', acuerdo]
             );
             await pool.execute("INSERT INTO recordatorio_visita_log (id_cliente, semana_inicio) VALUES (?, ?)", [c.id_cliente, semanaInicio]);
             cont++;
@@ -1956,10 +1966,20 @@ const server = http.createServer(async (req, res) => {
                    COALESCE(v.nombre, 'Sin asignar') as vendedor_nombre,
                    v.celular_vendedor
             FROM tab_clientes c
-            JOIN tab_facturas f ON f.id_cliente = c.id_cliente
-            LEFT JOIN tab_vendedores v ON c.vendedor = v.nombre OR f.id_vendedor = v.id_vendedor
-            WHERE f.pagada = 'NO' AND f.anulado = 'no'
+            LEFT JOIN tab_vendedores v ON c.vendedor = v.nombre
+            WHERE c.activo = 'si'
+              AND EXISTS (
+                SELECT 1 FROM tab_facturas f
+                WHERE f.id_cliente = c.id_cliente
+                  AND f.anulado = 'no'
                   AND DATEDIFF(CURDATE(), f.fecha_reg) >= 45
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM tab_facturas f
+                WHERE f.id_cliente = c.id_cliente
+                  AND f.anulado = 'no'
+                  AND f.pagada = 'NO'
+              )
             ORDER BY c.nombres
         `);
 
@@ -2011,7 +2031,7 @@ const server = http.createServer(async (req, res) => {
                 </div>
 
                 <div class="card shadow-sm mb-4">
-                    <div class="card-header bg-primary text-white">Clientes Elegibles (+45 días vencidos)</div>
+                    <div class="card-header bg-primary text-white">Clientes Elegibles (facturas pagadas, activos, +45 días)</div>
                     <div class="table-responsive">
                         <table class="table table-sm table-striped mb-0">
                             <thead><tr><th><input type="checkbox" id="checkAll"></th><th>ID</th><th>Cliente</th><th>Celular</th><th>Vendedor</th><th>Zona</th><th>Estado</th></tr></thead>
