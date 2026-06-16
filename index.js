@@ -1101,7 +1101,17 @@ async function checkRecordatorioVisitaSemanal(force = false) {
         `);
 
         let cont = 0;
-        for (const c of clientes) {
+        const BATCH_SIZE = 10;
+        const PAUSE_MS = 30000;
+
+        for (let i = 0; i < clientes.length; i++) {
+            const c = clientes[i];
+
+            if (i > 0 && i % BATCH_SIZE === 0) {
+                console.log(`[RECORDATORIO VISITA] Pausa de ${PAUSE_MS/1000}s tras lote ${i}/${clientes.length}...`);
+                await sleep(PAUSE_MS);
+            }
+
             const [yaEnviado] = await pool.execute(
                 "SELECT id FROM recordatorio_visita_log WHERE id_cliente = ? AND semana_inicio = ?",
                 [c.id_cliente, semanaInicio]
@@ -1137,7 +1147,7 @@ Estaremos encantados de coordinar una visita para conocer tus necesidades en det
                     image: { url: IMG_PRODUCTOS_ONE4CARS },
                     caption: mensaje
                 });
-                console.log(`[RECORDATORIO VISITA] ✅ Mensaje enviado a ${c.nombres} (${c.celular})`);
+                console.log(`[RECORDATORIO VISITA] ✅ (${i+1}/${clientes.length}) Enviado a ${c.nombres} (${c.celular})`);
 
                 const acuerdo = new Date();
                 acuerdo.setDate(acuerdo.getDate() + 3);
@@ -1166,7 +1176,7 @@ Estaremos encantados de coordinar una visita para conocer tus necesidades en det
             }
         }
 
-        console.log(`[RECORDATORIO VISITA] ${cont} cliente(s) notificado(s) esta semana.`);
+        console.log(`[RECORDATORIO VISITA] ${cont}/${clientes.length} cliente(s) notificado(s) esta semana.`);
     } catch (e) {
         console.log("[RECORDATORIO VISITA] Error general:", e.message);
     } finally {
@@ -1182,8 +1192,17 @@ async function checkRecordatorioVisitaSemanalPorIds(ids) {
     lunes.setDate(lunes.getDate() - ((lunes.getDay() + 6) % 7));
     const semanaInicio = lunes.toISOString().split('T')[0];
     let cont = 0;
+    const BATCH_SIZE = 10;
+    const PAUSE_MS = 30000;
 
-    for (const id of ids) {
+    for (let i = 0; i < ids.length; i++) {
+        const id = ids[i];
+
+        if (i > 0 && i % BATCH_SIZE === 0) {
+            console.log(`[RECORDATORIO VISITA] Pausa de ${PAUSE_MS/1000}s tras lote ${i}/${ids.length} manual...`);
+            await sleep(PAUSE_MS);
+        }
+
         const [clientes] = await pool.execute(`
             SELECT DISTINCT c.id_cliente, c.nombres, c.celular, c.telefono, c.direccion, c.zona,
                    v.id_vendedor, v.nombre as vendedor_nombre, v.celular_vendedor
@@ -1213,7 +1232,7 @@ async function checkRecordatorioVisitaSemanalPorIds(ids) {
             );
             await pool.execute("INSERT INTO recordatorio_visita_log (id_cliente, semana_inicio) VALUES (?, ?)", [c.id_cliente, semanaInicio]);
             cont++;
-            await sleep(2000);
+            await sleep(2500);
         } catch (e) {
             console.log(`[RECORDATORIO VISITA] Error con ${c.nombres}:`, e.message);
         }
@@ -1260,7 +1279,7 @@ async function startBot() {
                 setInterval(checkEstadisticasVendedores, 1800000);
 
                 // Recordatorio semanal de visita a clientes con facturas vencidas (+45 días)
-                setInterval(checkRecordatorioVisitaSemanal, 86400000);
+                setInterval(checkRecordatorioVisitaSemanal, 604800000);
                 setTimeout(() => checkRecordatorioVisitaSemanal(), 30000);
                 
                 setInterval(() => {
