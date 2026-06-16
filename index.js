@@ -1976,6 +1976,15 @@ const server = http.createServer(async (req, res) => {
             } catch (e) { res.end("Error: " + e.message); }
         });
     } else if (routename === '/recordatorio-visita') {
+        if (query.action === 'force') {
+            if (!isBotReady()) { res.writeHead(302, { Location: '/recordatorio-visita?error=Bot+no+listo' }); res.end(); return; }
+            recordatorioVisitaEjecutando = false;
+            await checkRecordatorioVisitaSemanal(true);
+            res.writeHead(302, { Location: '/recordatorio-visita?success=Recordatorio+forzado+completado' });
+            res.end();
+            return;
+        }
+
         const lunes = new Date();
         lunes.setDate(lunes.getDate() - ((lunes.getDay() + 6) % 7));
         const semanaInicio = lunes.toISOString().split('T')[0];
@@ -2039,6 +2048,8 @@ const server = http.createServer(async (req, res) => {
         <body class="bg-light">
             ${header}
             <div class="container mt-3">
+                ${query.error ? `<div class="alert alert-danger">❌ ${query.error}</div>` : ''}
+                ${query.success ? `<div class="alert alert-success">✅ ${query.success}</div>` : ''}
                 <h3>📬 Recordatorio Semanal de Visitas</h3>
                 <p class="text-muted">Semana: <strong>${semanaInicio}</strong></p>
 
