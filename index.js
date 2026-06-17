@@ -1147,8 +1147,16 @@ Estaremos encantados de coordinar una visita para conocer tus necesidades en det
                     image: { url: IMG_PRODUCTOS_ONE4CARS },
                     caption: mensaje
                 });
-                console.log(`[RECORDATORIO VISITA] ✅ (${i+1}/${clientes.length}) Enviado a ${c.nombres} (${c.celular})`);
+            } catch (e) {
+                console.log(`[RECORDATORIO VISITA] Imagen falló, enviando texto a ${c.nombres}:`, e.message);
+                try { await socketBot.sendMessage(jid, { text: mensaje }); } catch (e2) {
+                    console.log(`[RECORDATORIO VISITA] Texto también falló con ${c.nombres}:`, e2.message);
+                    continue;
+                }
+            }
+            console.log(`[RECORDATORIO VISITA] ✅ (${i+1}/${clientes.length}) Enviado a ${c.nombres} (${c.celular})`);
 
+            try {
                 const acuerdo = new Date();
                 acuerdo.setDate(acuerdo.getDate() + 3);
                 await pool.execute(
@@ -1170,10 +1178,10 @@ Estaremos encantados de coordinar una visita para conocer tus necesidades en det
                 );
 
                 cont++;
-                await sleep(2000);
             } catch (e) {
-                console.log(`[RECORDATORIO VISITA] Error con ${c.nombres}:`, e.message);
+                console.log(`[RECORDATORIO VISITA] Error DB con ${c.nombres}:`, e.message);
             }
+            await sleep(2000);
         }
 
         console.log(`[RECORDATORIO VISITA] ${cont}/${clientes.length} cliente(s) notificado(s) esta semana.`);
@@ -1224,6 +1232,14 @@ async function checkRecordatorioVisitaSemanalPorIds(ids) {
                 image: { url: IMG_PRODUCTOS_ONE4CARS },
                 caption: mensaje
             });
+        } catch (e) {
+            console.log(`[RECORDATORIO VISITA] Imagen falló, enviando texto a ${c.nombres}:`, e.message);
+            try { await socketBot.sendMessage(jid, { text: mensaje }); } catch (e2) {
+                console.log(`[RECORDATORIO VISITA] Texto también falló con ${c.nombres}:`, e2.message);
+                continue;
+            }
+        }
+        try {
             const acuerdo = new Date();
             acuerdo.setDate(acuerdo.getDate() + 3);
             await pool.execute(
@@ -1234,7 +1250,7 @@ async function checkRecordatorioVisitaSemanalPorIds(ids) {
             cont++;
             await sleep(2500);
         } catch (e) {
-            console.log(`[RECORDATORIO VISITA] Error con ${c.nombres}:`, e.message);
+            console.log(`[RECORDATORIO VISITA] Error DB con ${c.nombres}:`, e.message);
         }
     }
     console.log(`[RECORDATORIO VISITA] ${cont} cliente(s) notificado(s) manualmente.`);
@@ -1965,23 +1981,24 @@ const server = http.createServer(async (req, res) => {
     } else if (routename === '/enviar-recordatorio-visita' && req.method === 'POST') {
         if (!isBotReady()) { res.end("Bot no listo."); return; }
         let b = ''; req.on('data', c => b += c);
-        req.on('end', async () => {
+        req.on('end', () => {
             try {
                 const data = JSON.parse(b);
                 const ids = data.clientes || [];
                 if (ids.length === 0) { res.end("Ningún cliente seleccionado."); return; }
+                res.end(`✅ Envío iniciado para ${ids.length} cliente(s).`);
+                // Fire-and-forget: the sends continue in background
                 recordatorioVisitaEjecutando = false;
-                await checkRecordatorioVisitaSemanalPorIds(ids);
-                res.end(`✅ Recordatorio enviado a ${ids.length} cliente(s).`);
+                setTimeout(() => checkRecordatorioVisitaSemanalPorIds(ids), 500);
             } catch (e) { res.end("Error: " + e.message); }
         });
     } else if (routename === '/recordatorio-visita') {
         if (query.action === 'force') {
             if (!isBotReady()) { res.writeHead(302, { Location: '/recordatorio-visita?error=Bot+no+listo' }); res.end(); return; }
             recordatorioVisitaEjecutando = false;
-            await checkRecordatorioVisitaSemanal(true);
-            res.writeHead(302, { Location: '/recordatorio-visita?success=Recordatorio+forzado+completado' });
+            res.writeHead(302, { Location: '/recordatorio-visita?success=Forzado+iniciado+en+segundo+plano' });
             res.end();
+            setTimeout(() => checkRecordatorioVisitaSemanal(true), 500);
             return;
         }
 
