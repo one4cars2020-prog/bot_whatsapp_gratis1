@@ -1102,13 +1102,13 @@ async function checkRecordatorioVisitaSemanal(force = false) {
 
         let cont = 0;
         const BATCH_SIZE = 10;
-        const PAUSE_MS = 30000;
+        const PAUSE_MS = 600000;
 
         for (let i = 0; i < clientes.length; i++) {
             const c = clientes[i];
 
             if (i > 0 && i % BATCH_SIZE === 0) {
-                console.log(`[RECORDATORIO VISITA] Pausa de ${PAUSE_MS/1000}s tras lote ${i}/${clientes.length}...`);
+                console.log(`[RECORDATORIO VISITA] Pausa de ${PAUSE_MS/60000}min tras lote ${i}/${clientes.length}...`);
                 await sleep(PAUSE_MS);
             }
 
@@ -1181,7 +1181,7 @@ Estaremos encantados de coordinar una visita para conocer tus necesidades en det
             } catch (e) {
                 console.log(`[RECORDATORIO VISITA] Error DB con ${c.nombres}:`, e.message);
             }
-            await sleep(2000);
+            await sleep(10000);
         }
 
         console.log(`[RECORDATORIO VISITA] ${cont}/${clientes.length} cliente(s) notificado(s) esta semana.`);
@@ -1248,7 +1248,7 @@ async function checkRecordatorioVisitaSemanalPorIds(ids) {
             );
             await pool.execute("INSERT INTO recordatorio_visita_log (id_cliente, semana_inicio) VALUES (?, ?)", [c.id_cliente, semanaInicio]);
             cont++;
-            await sleep(2500);
+            await sleep(10000);
         } catch (e) {
             console.log(`[RECORDATORIO VISITA] Error DB con ${c.nombres}:`, e.message);
         }
@@ -1713,35 +1713,33 @@ async function startBot() {
             }
 
             // --- 5. LÓGICA DE PRODUCTOS MEJORADA ---
-            if (text !== 'menu' && !['hola', 'buen dia', 'buenos dias'].includes(text)) {
+            const autoReplyFrasi = ['gracias por comunicarte', 'mensaje automático', 'auto-reply', 'automatic reply', 'soy un bot', 'soy el asistente', 'comunicarte con', 'en breve te atenderemo'];
+            const esAutoReply = autoReplyFrasi.some(f => rawText.toLowerCase().includes(f));
+            if (!esAutoReply && text !== 'menu' && !['hola', 'buen dia', 'buenos dias'].includes(text)) {
                 try {
                     let prods = null;
+                    const sinStop = rawText.split(/\s+/).filter(p => p.replace(/[^a-zA-Z0-9]/g, '').length >= 4);
                     
                     const palabrasEnMensaje = rawText.split(/\s+/);
                     for (const p of palabrasEnMensaje) {
                         const codCandidato = p.replace(/[^a-zA-Z0-9]/g, ''); 
-                        if (codCandidato.length >= 4) { 
+                        if (codCandidato.length >= 4 && /[A-Za-z]/.test(codCandidato) && /[0-9]/.test(codCandidato)) { 
                             prods = await buscarProductoPorCodigo(codCandidato);
                             if (prods) break; 
                         }
                     }
                     
-                    if (!prods) {
+                    if (!prods && sinStop.length <= 5) {
                         prods = await buscarProductoPorTexto(rawText);
                     }
 
                     if (prods) {
                         const pct = await obtenerPorcentaje();
-                        const saludos = [
-                            "Saludos estimado, gracias por tu consulta. Aquí tienes la información solicitada: 👇",
-                            "¡Hola! He buscado en nuestro inventario y encontré esto: 👇",
-                            "Un placer saludarte. Según lo que me indicas, aquí tienes lo disponible: 👇"
-                        ];
-                        const saludoAzar = saludos[Math.floor(Math.random() * saludos.length)];
-                        await safeSendMessage(from, { text: saludoAzar });
+                        const saludoExacto = `¡Hola! He buscado en nuestro inventario y encontré esto:\n`;
+                        await safeSendMessage(from, { text: saludoExacto });
                         await sleep(1000);
 
-                        for (const p of prods) {
+                        for (const p of prods.slice(0, 5)) {
                             if (!isBotReady()) break; 
                             const precio = parseFloat(p.precio_minimo || 0) / pct;
                             
@@ -1764,7 +1762,7 @@ async function startBot() {
                             } catch (imgErr) {
                                 await safeSendMessage(from, { text: caption });
                             }
-                            await sleep(1500);
+                            await sleep(10000);
                         }
                         return;
                     }
@@ -2133,54 +2131,316 @@ const server = http.createServer(async (req, res) => {
         const filtroZona = parsedUrl.searchParams.get('zona') || '';
         const filtroFechaDesde = parsedUrl.searchParams.get('fecha_desde') || '';
         const filtroFechaHasta = parsedUrl.searchParams.get('fecha_hasta') || '';
+        const filtroDia = parsedUrl.searchParams.get('dia') || '';
         let where = [];
         let params = [];
         if (filtroZona) { where.push("zona = ?"); params.push(filtroZona); }
+        if (filtroDia) { where.push("acuerdo_visita = ?"); params.push(filtroDia); }
         if (filtroFechaDesde) { where.push("acuerdo_visita >= ?"); params.push(filtroFechaDesde); }
         if (filtroFechaHasta) { where.push("acuerdo_visita <= ?"); params.push(filtroFechaHasta); }
         const whereClause = where.length ? "WHERE " + where.join(" AND ") : "";
         const [zonas] = await pool.execute("SELECT DISTINCT zona FROM tab_visitas WHERE zona != '' ORDER BY zona");
-        const [visitas] = await pool.execute("SELECT * FROM tab_visitas " + whereClause + " ORDER BY acuerdo_visita DESC LIMIT 100", params);
+        const [visitas] = await pool.execute("SELECT * FROM tab_visitas " + whereClause + " ORDER BY acuerdo_visita DESC LIMIT 200", params);
         const rows = visitas.map(v => `<tr>
+            <td><input type="checkbox" class="visita-check" value="${v.id_visita}"></td>
             <td>${v.id_visita}</td>
             <td>${v.fecha_reg || ''}</td>
             <td>${v.nombres || ''}</td>
             <td>${v.celular || ''}</td>
             <td>${v.nombre || ''}</td>
+            <td>${v.zona || ''}</td>
             <td>${v.acuerdo_visita || ''}</td>
-            <td>${v.motivo || ''}</td>
+            <td>${v.motivo ? v.motivo.substring(0, 40) : ''}</td>
             <td>${v.visita_realizada}</td>
         </tr>`).join('');
         const zonaOptions = zonas.map(z => `<option value="${z.zona}"${filtroZona === z.zona ? ' selected' : ''}>${z.zona}</option>`).join('');
-        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Visitas Agendadas</title></head><body class="bg-light">${header}<div class="container mt-3"><h3>📅 Visitas Agendadas</h3>
-        <form class="row g-2 mb-3 p-3 bg-white rounded shadow-sm align-items-end" method="GET" action="/visitas">
-            <div class="col-auto">
-                <label class="form-label small mb-1">Zona</label>
-                <select name="zona" class="form-select form-select-sm" onchange="this.form.submit()">
-                    <option value="">Todas</option>
-                    ${zonaOptions}
-                </select>
+        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Visitas Agendadas</title><style>body{background:#f4f7f6}.card-custom{border-radius:12px;border:none;box-shadow:0 2px 8px rgba(0,0,0,0.06)}</style></head><body class="bg-light">${header}
+        <div class="container-fluid px-4 mt-3">
+        <h3>📅 Agenda de Visitas</h3>
+
+        <div class="row g-3 mb-3">
+        <!-- Filters -->
+        <div class="col-md-8">
+        <div class="card card-custom p-3">
+        <form class="row g-2 align-items-end" method="GET" action="/visitas">
+            <div class="col-3">
+                <label class="small fw-bold">Zona</label>
+                <select name="zona" class="form-select form-select-sm">${zonaOptions}</select>
             </div>
-            <div class="col-auto">
-                <label class="form-label small mb-1">Fecha Desde</label>
+            <div class="col-3">
+                <label class="small fw-bold">Ver día</label>
+                <input type="date" name="dia" class="form-control form-control-sm" value="${filtroDia}">
+            </div>
+            <div class="col-2">
+                <label class="small fw-bold">Desde</label>
                 <input type="date" name="fecha_desde" class="form-control form-control-sm" value="${filtroFechaDesde}">
             </div>
-            <div class="col-auto">
-                <label class="form-label small mb-1">Fecha Hasta</label>
+            <div class="col-2">
+                <label class="small fw-bold">Hasta</label>
                 <input type="date" name="fecha_hasta" class="form-control form-control-sm" value="${filtroFechaHasta}">
             </div>
-            <div class="col-auto d-flex align-items-end gap-1">
+            <div class="col-2 d-flex gap-1">
                 <button type="submit" class="btn btn-sm btn-primary">Filtrar</button>
-                <a href="/visitas" class="btn btn-sm btn-outline-secondary">Limpiar</a>
+                <a href="/visitas" class="btn btn-sm btn-outline-secondary">X</a>
             </div>
         </form>
-        <div class="table-responsive"><table class="table table-sm table-striped"><thead><tr><th>ID</th><th>Fecha Reg.</th><th>Cliente</th><th>Celular</th><th>Vendedor</th><th>Acuerdo Visita</th><th>Motivo</th><th>Realizada</th></tr></thead><tbody>${rows}</tbody></table><a href="/" class="btn btn-outline-secondary">Volver</a></div></div></body></html>`);
+        </div>
+        </div>
+
+        <!-- Move visits -->
+        <div class="col-md-4">
+        <div class="card card-custom p-3">
+        <form class="row g-2 align-items-end" method="POST" action="/mover-visitas">
+            <div class="col-5">
+                <label class="small fw-bold">De fecha</label>
+                <input type="date" name="desde" class="form-control form-control-sm" required>
+            </div>
+            <div class="col-5">
+                <label class="small fw-bold">A fecha</label>
+                <input type="date" name="hasta" class="form-control form-control-sm" required>
+            </div>
+            <div class="col-2">
+                <button type="submit" class="btn btn-sm btn-warning">Mover ➡</button>
+            </div>
+        </form>
+        </div>
+        </div>
+        </div>
+
+        <div class="card card-custom p-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h5>Visitas (${visitas.length})</h5>
+            <div><input class="form-check-input" type="checkbox" id="checkAllVis" onchange="document.querySelectorAll('.visita-check').forEach(c=>c.checked=this.checked)"> <label class="form-check-label small">Sel. Todos</label></div>
+        </div>
+        <div class="table-responsive">
+        <table class="table table-hover table-sm align-middle">
+        <thead class="table-light"><tr><th style="width:36px">Sel</th><th>ID</th><th>Fecha Reg.</th><th>Cliente</th><th>Celular</th><th>Vendedor</th><th>Zona</th><th>Acuerdo</th><th>Motivo</th><th>¿Hecha?</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="10" class="text-center text-muted">Sin visitas</td></tr>'}</tbody>
+        </table></div></div>
+        <a href="/" class="btn btn-outline-secondary mt-2">⬅ Volver</a>
+        </div></body></html>`);
+    } else if (routename === '/enviar-recordatorio-estado' && req.method === 'POST') {
+        if (!isBotReady()) { res.end("Bot no listo."); return; }
+        let b = ''; req.on('data', c => b += c);
+        req.on('end', async () => {
+            try {
+                const data = JSON.parse(b);
+                const ids = data.clientes || [];
+                if (ids.length === 0) { res.end("Ningún cliente seleccionado."); return; }
+                res.end(`✅ Envío iniciado para ${ids.length} cliente(s).`);
+                setTimeout(async () => {
+                    let cont = 0;
+                    for (const id of ids) {
+                        const [clientes] = await pool.execute("SELECT id_cliente, nombres, celular FROM tab_clientes WHERE id_cliente = ?", [id]);
+                        const c = clientes[0];
+                        if (!c) continue;
+                        const jid = formatWhatsApp(c.celular);
+                        if (!jid) continue;
+                        const msg = `📢 *ONE4CARS — Recordatorio de Pago* 🚗\n\nHola *${c.nombres}*, te recordamos que tienes facturas pendientes por cancelar. Te invitamos a ponerte al día para evitar interrupciones en tu servicio.\n\n💰 *Realiza tu pago a la brevedad* y sigue disfrutando de nuestros productos y atención.\n\n¡Gracias por tu preferencia! 🚀`;
+                        await safeSendMessage(jid, { text: msg });
+                        cont++;
+                        await sleep(10000);
+                    }
+                    console.log(`[RECORDATORIO ESTADO] ${cont}/${ids.length} enviado(s).`);
+                }, 500);
+            } catch (e) { res.end("Error: " + e.message); }
+        });
     } else if (routename === '/recordatorio-estado') {
-        const facturas = await notificador.obtenerFacturasVencidas();
-        const enviados = await notificador.obtenerRecordatoriosEnviados();
-        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Recordatorios</title></head><body class="bg-light">${header}<div class="container mt-5"><div class="card shadow-lg p-4 mx-auto" style="max-width: 800px; border-radius: 15px;"><h3>📅 Recordatorios</h3><hr><table class="table table-sm"><thead><tr><th>Factura</th><th>Cliente</th><th>Días</th><th>Estado</th></tr></thead><tbody>${facturas.map(f => `<tr><td>${f.nro_factura}</td><td>${f.nombres}</td><td>${f.dias_vencida}</td><td>${(enviados[f.id_factura]) ? '✅' : '⏳'}</td></tr>`).join('')}</tbody></table><a href="/" class="btn btn-outline-secondary">Volver</a></div></div></body></html>`);
+        if (query.force) {
+            if (!isBotReady()) { res.writeHead(302, { Location: '/recordatorio-estado?error=Bot+no+listo' }); res.end(); return; }
+            res.writeHead(302, { Location: '/recordatorio-estado?success=Forzado+iniciado' });
+            res.end();
+            setTimeout(async () => {
+                const [todos] = await pool.execute("SELECT DISTINCT c.id_cliente, c.nombres, c.celular FROM tab_clientes c JOIN tab_facturas f ON c.id_cliente = f.id_cliente WHERE f.pagada='NO' AND f.anulado='no' AND c.activo='si'");
+                let cont = 0;
+                for (const c of todos) {
+                    const jid = formatWhatsApp(c.celular);
+                    if (!jid) continue;
+                    const msg = `📢 *ONE4CARS — Recordatorio de Pago* 🚗\n\nHola *${c.nombres}*, te recordamos que tienes facturas pendientes por cancelar. Te invitamos a ponerte al día para evitar interrupciones en tu servicio.\n\n💰 *Realiza tu pago a la brevedad* y sigue disfrutando de nuestros productos y atención.\n\n¡Gracias por tu preferencia! 🚀`;
+                    await safeSendMessage(jid, { text: msg });
+                    cont++;
+                    await sleep(10000);
+                }
+                console.log(`[RECORDATORIO ESTADO] Forzado: ${cont} enviado(s).`);
+            }, 500);
+            return;
+        }
+        const [zonas] = await pool.execute("SELECT DISTINCT zona FROM tab_clientes WHERE zona != '' AND zona IS NOT NULL ORDER BY zona");
+        const [vendedores] = await pool.execute("SELECT DISTINCT vendedor FROM tab_clientes WHERE vendedor != '' AND vendedor IS NOT NULL ORDER BY vendedor");
+        const filtroZona = query.zona || '';
+        const filtroVendedor = query.vendedor || '';
+        let sql = `SELECT c.id_cliente, c.nombres, c.celular, c.zona, c.vendedor,
+                   SUM((f.total - f.abono_factura) / (f.porcentaje || 1)) as saldo_total,
+                   COUNT(f.id_factura) as cantidad_facturas,
+                   MAX(DATEDIFF(CURDATE(), f.fecha_reg)) as dias_vencida
+                   FROM tab_clientes c JOIN tab_facturas f ON c.id_cliente = f.id_cliente
+                   WHERE f.pagada = 'NO' AND f.anulado = 'no' AND c.activo = 'si'`;
+        const params = [];
+        if (filtroZona) { sql += " AND c.zona = ?"; params.push(filtroZona); }
+        if (filtroVendedor) { sql += " AND c.vendedor = ?"; params.push(filtroVendedor); }
+        sql += " GROUP BY c.id_cliente HAVING saldo_total > 0 ORDER BY dias_vencida DESC";
+        const [deudores] = await pool.execute(sql, params);
+        const [yaNotificados] = await pool.execute("SELECT id_cliente, COUNT(*) as total FROM recordatorios_log rl JOIN tab_facturas f ON rl.id_factura = f.id_factura GROUP BY f.id_cliente");
+        const notifSet = new Set(yaNotificados.map(r => r.id_cliente));
+        const zonaOpts = zonas.map(z => `<option value="${z.zona}"${filtroZona === z.zona?' selected':''}>${z.zona}</option>`).join('');
+        const vendOpts = vendedores.map(v => `<option value="${v.vendedor}"${filtroVendedor === v.vendedor?' selected':''}>${v.vendedor}</option>`).join('');
+        const filas = deudores.map(d => `<tr>
+            <td><input type="checkbox" class="cliente-check-rec" value="${d.id_cliente}" checked></td>
+            <td>${d.nombres}</td><td>${d.celular || ''}</td>
+            <td><span class="badge bg-secondary">${d.zona || ''}</span></td>
+            <td>${d.vendedor || ''}</td>
+            <td class="text-center">${d.cantidad_facturas}</td>
+            <td class="text-end text-danger fw-bold">$${parseFloat(d.saldo_total).toFixed(2)}</td>
+            <td class="text-center">${d.dias_vencida}d</td>
+            <td>${notifSet.has(d.id_cliente) ? '<span class="badge bg-success">✅</span>' : '<span class="badge bg-warning text-dark">⏳</span>'}</td>
+        </tr>`).join('');
+        res.end(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Recordatorios de Pago</title><style>body{background:#f4f7f6}.card-custom{border-radius:15px;border:none;box-shadow:0 4px 12px rgba(0,0,0,0.08)}</style></head><body>${header}
+        <div class="container-fluid px-4 mt-3">
+        ${query.error ? `<div class="alert alert-danger">❌ ${query.error}</div>` : ''}
+        ${query.success ? `<div class="alert alert-success">✅ ${query.success}</div>` : ''}
+        <div class="card card-custom p-4 mb-4">
+        <div class="row align-items-end">
+            <div class="col-md-4"><h4>📢 Recordatorios de Pago</h4><p class="text-muted small">Clientes con facturas vencidas.</p></div>
+            <div class="col-md-4">
+            <form method="GET" action="/recordatorio-estado" class="row g-2">
+                <div class="col-6">
+                    <label class="small fw-bold">Zona:</label>
+                    <select name="zona" class="form-select form-select-sm"><option value="">Todas</option>${zonaOpts}</select>
+                </div>
+                <div class="col-6">
+                    <label class="small fw-bold">Vendedor:</label>
+                    <select name="vendedor" class="form-select form-select-sm"><option value="">Todos</option>${vendOpts}</select>
+                </div>
+                <div class="col-12 mt-2"><button type="submit" class="btn btn-dark w-100 btn-sm">Filtrar</button></div>
+            </form>
+            </div>
+            <div class="col-md-4 text-end">
+                <button onclick="enviarRecordatorio()" class="btn btn-danger btn-lg px-4 shadow">🚀 Enviar a Seleccionados</button>
+                <a href="/recordatorio-estado?force=1" class="btn btn-warning btn-sm mt-1">📨 Forzar Todos</a>
+                <div id="statusRec" class="mt-1 small fw-bold"></div>
+            </div>
+        </div>
+        </div>
+        <div class="card card-custom p-4">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h5>Deudores (${deudores.length})</h5>
+            <div><input class="form-check-input" type="checkbox" id="selectAllRec" checked onclick="toggleAllRec()"> <label class="form-check-label small">Sel. Todos</label></div>
+        </div>
+        <div class="table-responsive">
+        <table class="table table-hover align-middle table-sm">
+        <thead class="table-light"><tr><th style="width:40px">Sel</th><th>Cliente</th><th>Celular</th><th>Zona</th><th>Vendedor</th><th class="text-center">Fact.</th><th class="text-end">Saldo</th><th class="text-center">Días</th><th>Notif.</th></tr></thead>
+        <tbody>${filas}</tbody></table></div>
+        </div></div>
+        <script>
+        function toggleAllRec(){const ch=document.getElementById('selectAllRec').checked;document.querySelectorAll('.cliente-check-rec').forEach(c=>c.checked=ch);}
+        async function enviarRecordatorio(){
+            const sel=Array.from(document.querySelectorAll('.cliente-check-rec:checked')).map(c=>c.value);
+            if(sel.length===0)return alert("Selecciona al menos un cliente.");
+            if(!confirm("Enviar recordatorio a "+sel.length+" cliente(s)?"))return;
+            const st=document.getElementById('statusRec');st.className="mt-1 small fw-bold text-primary";st.innerHTML="⏳ Enviando...";
+            try{
+                const r=await fetch('/enviar-recordatorio-estado',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clientes:sel})});
+                const t=await r.text();alert(t);st.className="mt-1 small fw-bold text-success";st.innerHTML="✅ Enviado!";
+            }catch(e){st.className="mt-1 small fw-bold text-danger";st.innerHTML="❌ "+e.message;}
+        }
+        </script>
+        </body></html>`);
+    } else if (routename === '/agendar-zona' && req.method === 'POST') {
+        let b = ''; req.on('data', c => b += c);
+        req.on('end', async () => {
+            try {
+                const data = JSON.parse(b);
+                const { zona, fecha, frecuencia } = data;
+                if (!zona || !fecha) { res.end("Faltan datos."); return; }
+                const [clientes] = await pool.execute("SELECT id_cliente, nombres, direccion, telefono, celular, zona, vendedor FROM tab_clientes WHERE zona = ? AND activo = 'si'", [zona]);
+                if (clientes.length === 0) { res.end("No hay clientes en esa zona."); return; }
+                res.end(`✅ ${clientes.length} visita(s) agendada(s) para el ${fecha}.`);
+                setTimeout(async () => {
+                    let ins = 0;
+                    for (const c of clientes) {
+                        const vendNom = c.vendedor || '';
+                        const [vend] = await pool.execute("SELECT id_vendedor FROM tab_vendedores WHERE nombre = ? LIMIT 1", [vendNom]);
+                        const idV = vend.length > 0 ? vend[0].id_vendedor : 0;
+                        const acuerdo = new Date(fecha);
+                        await pool.execute(
+                            `INSERT INTO tab_visitas (fecha_reg, rif, id_cliente, nombres, direccion, telefono, celular, id_vendedor, nombre, direcciongooglemap, zona, visita_realizada, contador_visitas, motivo, logro, acuerdo_visita, dias_frecuencia, interes_producto) VALUES (CURDATE(), '', ?, ?, ?, ?, ?, ?, ?, '', ?, 'NO', 1, 'Agendamiento masivo por zona', 'NO', ?, ?, 'SI')`,
+                            [c.id_cliente, c.nombres, c.direccion || '', c.telefono || '', c.celular, idV, vendNom, c.zona, acuerdo, parseInt(frecuencia) || 0]
+                        );
+                        ins++;
+                        await sleep(500);
+                    }
+                    console.log(`[AGENDAR ZONA] ${ins} visitas creadas para zona ${zona}`);
+                }, 500);
+            } catch (e) { res.end("Error: " + e.message); }
+        });
+    } else if (routename === '/mover-visitas' && req.method === 'POST') {
+        let b = ''; req.on('data', c => b += c);
+        req.on('end', async () => {
+            try {
+                const data = JSON.parse(b);
+                const { desde, hasta } = data;
+                if (!desde || !hasta) { res.end("Faltan fechas."); return; }
+                const [result] = await pool.execute("UPDATE tab_visitas SET acuerdo_visita = ? WHERE acuerdo_visita = ?", [hasta, desde]);
+                res.end(`✅ ${result.affectedRows} visita(s) movida(s) de ${desde} a ${hasta}.`);
+            } catch (e) { res.end("Error: " + e.message); }
+        });
     } else {
-        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="30"><title>Admin ONE4CARS</title></head><body style="background-color: #f4f7f6;">${header}<div class="container text-center"><div class="card shadow-lg p-4 mx-auto" style="max-width: 500px; border-radius: 15px;"><h4 class="mb-3">Estado del Bot</h4><div class="my-4">${qrCodeData.startsWith('data') ? `<img src="${qrCodeData}" class="img-fluid rounded" style="max-width: 250px;">` : `<h2 class="text-success">${qrCodeData}</h2>`}</div><p>BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}</p><div class="d-grid gap-2"><a href="/cobranza" class="btn btn-primary">PANEL DE COBRANZA</a><a href="/marketing-panel" class="btn btn-info text-white">PANEL DE MARKETING</a><a href="/notificador-estado" class="btn btn-secondary text-white">NOTIFICADOR</a><a href="/historial" class="btn btn-info text-white">HISTORIAL</a><a href="/recordatorio-estado" class="btn btn-warning text-dark">RECORDATORIOS</a><a href="/visitas" class="btn btn-success text-white">📅 VISITAS</a><a href="/recordatorio-visita" class="btn btn-danger text-white">📬 REC. VISITA</a></div></div></div></body></html>`);
+        const [zonas] = await pool.execute("SELECT DISTINCT zona FROM tab_clientes WHERE zona != '' AND zona IS NOT NULL ORDER BY zona");
+        const zonaOptsMain = zonas.map(z => `<option value="${z.zona}">${z.zona}</option>`).join('');
+        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="30"><title>Admin ONE4CARS</title></head><body style="background-color: #f4f7f6;">${header}
+        <div class="container">
+        <div class="row">
+        <!-- Bot status -->
+        <div class="col-md-6 mb-3">
+        <div class="card shadow-lg p-4 mx-auto" style="max-width:500px;border-radius:15px;">
+        <h4 class="mb-3">Estado del Bot</h4>
+        <div class="my-4">${qrCodeData.startsWith('data') ? `<img src="${qrCodeData}" class="img-fluid rounded" style="max-width:250px;">` : `<h2 class="text-success">${qrCodeData}</h2>`}</div>
+        <p>BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}</p>
+        <div class="d-grid gap-2">
+        <a href="/cobranza" class="btn btn-primary">PANEL DE COBRANZA</a>
+        <a href="/marketing-panel" class="btn btn-info text-white">PANEL DE MARKETING</a>
+        <a href="/notificador-estado" class="btn btn-secondary text-white">NOTIFICADOR</a>
+        <a href="/historial" class="btn btn-info text-white">HISTORIAL</a>
+        <a href="/recordatorio-estado" class="btn btn-warning text-dark">RECORDATORIOS</a>
+        <a href="/visitas" class="btn btn-success text-white">📅 VISITAS</a>
+        <a href="/recordatorio-visita" class="btn btn-danger text-white">📬 REC. VISITA</a>
+        </div></div></div>
+        <!-- Zone scheduling -->
+        <div class="col-md-6 mb-3">
+        <div class="card shadow-lg p-4" style="max-width:500px;border-radius:15px;">
+        <h4>🗺️ Gestión de Zonas</h4>
+        <p class="text-muted small">Agenda visitas para todos los clientes de una zona.</p>
+        <div class="mb-2">
+            <label class="form-label small fw-bold">Zona</label>
+            <select id="zonaSel" class="form-select form-select-sm">${zonaOptsMain}</select>
+        </div>
+        <div class="mb-2">
+            <label class="form-label small fw-bold">Fecha de visita</label>
+            <input type="date" id="fechaSel" class="form-control form-control-sm">
+        </div>
+        <div class="mb-2">
+            <label class="form-label small fw-bold">Frecuencia (días, 0 = única vez)</label>
+            <input type="number" id="frecSel" class="form-control form-control-sm" value="0" min="0">
+        </div>
+        <button onclick="agendarZona()" class="btn btn-success w-100">📅 Agendar Zona Completa</button>
+        <div id="statusZona" class="mt-2 small fw-bold"></div>
+        </div></div>
+        </div></div>
+        <script>
+        async function agendarZona(){
+            const zona=document.getElementById('zonaSel').value;
+            const fecha=document.getElementById('fechaSel').value;
+            const frecuencia=document.getElementById('frecSel').value;
+            if(!zona||!fecha)return alert("Selecciona zona y fecha.");
+            if(!confirm("Agendar visitas para toda la zona "+zona+" el "+fecha+"?"))return;
+            const st=document.getElementById('statusZona');st.className="mt-2 small fw-bold text-primary";st.innerHTML="⏳ Agendando...";
+            try{
+                const r=await fetch('/agendar-zona',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({zona,fecha,frecuencia})});
+                const t=await r.text();alert(t);st.innerHTML="✅ "+t;
+            }catch(e){st.innerHTML="❌ "+e.message;}
+        }
+        </script>
+        </body></html>`);
     }
 });
 
