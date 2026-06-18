@@ -2398,7 +2398,7 @@ const server = http.createServer(async (req, res) => {
                         const bcv = (divisas && f) ? (divisas / (parseFloat(f.porcentaje) || 1)) : 0;
                         const jid = formatWhatsApp(c.celular);
                         if (!jid) continue;
-                        const msg = `📢 *ONE4CARS — Recordatorio de Pago* 🚗\n\nEstimado(a) *${c.nombres}*, le escribimos de manera cordial para recordarle que la nota ${notaStr} por un Monto de $${divisas.toFixed(2)} se encuentra vencida desde hace ${diasStr}. Le solicitamos proceder con el pago a la brevedad para evitar suspensiones en el servicio y mantener su historial comercial al día.\n\n💰 Realice su pago ahora y continúe disfrutando de nuestros productos y atención preferencial.\nTotal Divisas: $${divisas.toFixed(2)}\nTotal Bs: ${bcv.toFixed(2)}\n\nAgradecemos su pronta gestión. ¡Gracias por confiar en ONE4CARS! 🚀`;
+                        const msg = `📢 *ONE4CARS — Recordatorio de Pago* 🚗\n\nEstimado(a) *${c.nombres}*, le escribimos de manera cordial para recordarle que la nota ${notaStr} por un Monto de $${divisas.toFixed(2)} se encuentra vencida desde hace ${diasStr}. Le solicitamos proceder con el pago a la brevedad para evitar suspensiones en el servicio y mantener su historial comercial al día.\n\n💰 Realice su pago ahora y continúe disfrutando de nuestros productos y atención preferencial.\nTotal Divisas: $${divisas.toFixed(2)}\nTotal $ calculados a BCV del dia: ${bcv.toFixed(2)}\n\nAgradecemos su pronta gestión. ¡Gracias por confiar en ONE4CARS! 🚀`;
                         await safeSendMessage(jid, { text: msg });
                         cont++;
                         await sleep(sendConfig.pauseSend);
@@ -2428,7 +2428,7 @@ const server = http.createServer(async (req, res) => {
                     const bcv = (divisas && f) ? (divisas / (parseFloat(f.porcentaje) || 1)) : 0;
                     const jid = formatWhatsApp(c.celular);
                     if (!jid) continue;
-                    const msg = `📢 *ONE4CARS — Recordatorio de Pago* 🚗\n\nEstimado(a) *${c.nombres}*, le escribimos de manera cordial para recordarle que la nota ${notaStr} por un Monto de $${divisas.toFixed(2)} se encuentra vencida desde hace ${diasStr}. Le solicitamos proceder con el pago a la brevedad para evitar suspensiones en el servicio y mantener su historial comercial al día.\n\n💰 Realice su pago ahora y continúe disfrutando de nuestros productos y atención preferencial.\nTotal Divisas: $${divisas.toFixed(2)}\nTotal Bs: ${bcv.toFixed(2)}\n\nAgradecemos su pronta gestión. ¡Gracias por confiar en ONE4CARS! 🚀`;
+                    const msg = `📢 *ONE4CARS — Recordatorio de Pago* 🚗\n\nEstimado(a) *${c.nombres}*, le escribimos de manera cordial para recordarle que la nota ${notaStr} por un Monto de $${divisas.toFixed(2)} se encuentra vencida desde hace ${diasStr}. Le solicitamos proceder con el pago a la brevedad para evitar suspensiones en el servicio y mantener su historial comercial al día.\n\n💰 Realice su pago ahora y continúe disfrutando de nuestros productos y atención preferencial.\nTotal Divisas: $${divisas.toFixed(2)}\nTotal % Calculados a BCV del dia: ${bcv.toFixed(2)}\n\nAgradecemos su pronta gestión. ¡Gracias por confiar en ONE4CARS! 🚀`;
                     await safeSendMessage(jid, { text: msg });
                     cont++;
                     await sleep(sendConfig.pauseSend);
