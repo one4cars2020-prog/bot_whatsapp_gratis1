@@ -1906,15 +1906,17 @@ const server = http.createServer(async (req, res) => {
         let b = ''; req.on('data', c => b += c);
         req.on('end', async () => {
             const data = JSON.parse(b);
-            for (const id_cliente of data.facturas) {
+                for (const id_cliente of data.facturas) {
                 const [facturas] = await pool.execute(
-                    "SELECT f.nro_factura, f.total, f.abono_factura, f.fecha_reg, f.porcentaje, c.nombres, c.celular FROM tab_facturas f JOIN tab_clientes c ON f.id_cliente = c.id_cliente WHERE f.id_cliente = ? AND f.pagada = 'NO' AND f.anulado = 'no'", 
+                    "SELECT f.nro_factura, f.total, f.abono_factura, f.fecha_reg, f.porcentaje, DATEDIFF(CURDATE(), f.fecha_reg) as dias, c.nombres, c.celular FROM tab_facturas f JOIN tab_clientes c ON f.id_cliente = c.id_cliente WHERE f.id_cliente = ? AND f.pagada = 'NO' AND f.anulado = 'no'", 
                     [id_cliente]
                 );
                 for (const f of facturas) {
                     const jid = formatWhatsApp(f.celular);
-                    const saldoBs = (f.total - f.abono_factura) / (f.porcentaje || 1);
-                    const msg = `Hola *${f.nombres}* 🚗, factura #${f.nro_factura} pendiente.\nSaldo: Bs. *${saldoBs.toLocaleString('es-VE')}*.\nPor favor gestione su pago.`;
+                    const divisas = parseFloat(f.total) - parseFloat(f.abono_factura || 0);
+                    const bcv = divisas / (parseFloat(f.porcentaje) || 1);
+                    const dias = Math.floor((new Date() - new Date(f.fecha_reg)) / 86400000);
+                    const msg = `📢 *ONE4CARS — Recordatorio de Pago* 🚗\n\nEstimado(a) *${f.nombres}*, le escribimos de manera cordial para recordarle que la nota #${f.nro_factura} por un Monto de $${divisas.toFixed(2)} se encuentra vencida desde hace ${dias} días. Le solicitamos proceder con el pago a la brevedad para evitar suspensiones en el servicio y mantener su historial comercial al día.\n\n💰 Realice su pago ahora y continúe disfrutando de nuestros productos y atención preferencial.\n                        Total Divisas: $${divisas.toFixed(2)}\nTotal Bs: ${bcv.toFixed(2)}\n\nAgradecemos su pronta gestión. ¡Gracias por confiar en ONE4CARS! 🚀`;
                     await safeSendMessage(jid, { text: msg });
                     await randomDelay();
                 }
@@ -2388,13 +2390,15 @@ const server = http.createServer(async (req, res) => {
                         const [clientes] = await pool.execute("SELECT id_cliente, nombres, celular FROM tab_clientes WHERE id_cliente = ?", [ids[i]]);
                         const c = clientes[0];
                         if (!c) continue;
-                        const [facturas] = await pool.execute("SELECT nro_factura, DATEDIFF(CURDATE(), fecha_reg) as dias FROM tab_facturas WHERE id_cliente = ? AND pagada='NO' AND anulado='no' ORDER BY fecha_reg ASC LIMIT 1", [c.id_cliente]);
+                        const [facturas] = await pool.execute("SELECT nro_factura, total, abono_factura, porcentaje, DATEDIFF(CURDATE(), fecha_reg) as dias FROM tab_facturas WHERE id_cliente = ? AND pagada='NO' AND anulado='no' ORDER BY fecha_reg ASC LIMIT 1", [c.id_cliente]);
                         const f = facturas[0];
                         const notaStr = f ? `#${f.nro_factura}` : 'pendiente';
                         const diasStr = f ? `${f.dias} días` : 'varios días';
+                        const divisas = f ? (parseFloat(f.total) - parseFloat(f.abono_factura || 0)) : 0;
+                        const bcv = (divisas && f) ? (divisas / (parseFloat(f.porcentaje) || 1)) : 0;
                         const jid = formatWhatsApp(c.celular);
                         if (!jid) continue;
-                        const msg = `📢 *ONE4CARS — Recordatorio de Pago* 🚗\n\nEstimado(a) *${c.nombres}*, le escribimos de manera cordial para recordarle que la nota ${notaStr} se encuentra vencida desde hace *${diasStr}*. Le solicitamos proceder con el pago a la brevedad para evitar suspensiones en el servicio y mantener su historial comercial al día.\n\n💰 *Realice su pago ahora* y continúe disfrutando de nuestros productos y atención preferencial.\n\nAgradecemos su pronta gestión. ¡Gracias por confiar en ONE4CARS! 🚀`;
+                        const msg = `📢 *ONE4CARS — Recordatorio de Pago* 🚗\n\nEstimado(a) *${c.nombres}*, le escribimos de manera cordial para recordarle que la nota ${notaStr} por un Monto de $${divisas.toFixed(2)} se encuentra vencida desde hace ${diasStr}. Le solicitamos proceder con el pago a la brevedad para evitar suspensiones en el servicio y mantener su historial comercial al día.\n\n💰 Realice su pago ahora y continúe disfrutando de nuestros productos y atención preferencial.\nTotal Divisas: $${divisas.toFixed(2)}\nTotal Bs: ${bcv.toFixed(2)}\n\nAgradecemos su pronta gestión. ¡Gracias por confiar en ONE4CARS! 🚀`;
                         await safeSendMessage(jid, { text: msg });
                         cont++;
                         await sleep(sendConfig.pauseSend);
@@ -2416,13 +2420,15 @@ const server = http.createServer(async (req, res) => {
                 for (let i = 0; i < todos.length; i++) {
                     if (i > 0 && i % bs === 0) { console.log(`[REC ESTADO] Pausa ${pb/60000}min lote ${i}/${todos.length}...`); await sleep(pb); }
                     const c = todos[i];
-                    const [facturas] = await pool.execute("SELECT nro_factura, DATEDIFF(CURDATE(), fecha_reg) as dias FROM tab_facturas WHERE id_cliente = ? AND pagada='NO' AND anulado='no' ORDER BY fecha_reg ASC LIMIT 1", [c.id_cliente]);
+                    const [facturas] = await pool.execute("SELECT nro_factura, total, abono_factura, porcentaje, DATEDIFF(CURDATE(), fecha_reg) as dias FROM tab_facturas WHERE id_cliente = ? AND pagada='NO' AND anulado='no' ORDER BY fecha_reg ASC LIMIT 1", [c.id_cliente]);
                     const f = facturas[0];
                     const notaStr = f ? `#${f.nro_factura}` : 'pendiente';
                     const diasStr = f ? `${f.dias} días` : 'varios días';
+                    const divisas = f ? (parseFloat(f.total) - parseFloat(f.abono_factura || 0)) : 0;
+                    const bcv = (divisas && f) ? (divisas / (parseFloat(f.porcentaje) || 1)) : 0;
                     const jid = formatWhatsApp(c.celular);
                     if (!jid) continue;
-                    const msg = `📢 *ONE4CARS — Recordatorio de Pago* 🚗\n\nEstimado(a) *${c.nombres}*, le escribimos de manera cordial para recordarle que la nota ${notaStr} se encuentra vencida desde hace *${diasStr}*. Le solicitamos proceder con el pago a la brevedad para evitar suspensiones en el servicio y mantener su historial comercial al día.\n\n💰 *Realice su pago ahora* y continúe disfrutando de nuestros productos y atención preferencial.\n\nAgradecemos su pronta gestión. ¡Gracias por confiar en ONE4CARS! 🚀`;
+                    const msg = `📢 *ONE4CARS — Recordatorio de Pago* 🚗\n\nEstimado(a) *${c.nombres}*, le escribimos de manera cordial para recordarle que la nota ${notaStr} por un Monto de $${divisas.toFixed(2)} se encuentra vencida desde hace ${diasStr}. Le solicitamos proceder con el pago a la brevedad para evitar suspensiones en el servicio y mantener su historial comercial al día.\n\n💰 Realice su pago ahora y continúe disfrutando de nuestros productos y atención preferencial.\nTotal Divisas: $${divisas.toFixed(2)}\nTotal Bs: ${bcv.toFixed(2)}\n\nAgradecemos su pronta gestión. ¡Gracias por confiar en ONE4CARS! 🚀`;
                     await safeSendMessage(jid, { text: msg });
                     cont++;
                     await sleep(sendConfig.pauseSend);
