@@ -1928,12 +1928,14 @@ const server = http.createServer(async (req, res) => {
             res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Sesión borrada</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="5;url=/"> </head><body class="bg-light"><div class="container mt-5 text-center"><div class="card shadow p-5 mx-auto" style="max-width:500px;border-radius:15px;"><h3>✅ Sesión borrada</h3><p class="mt-3">La carpeta <strong>auth_info</strong> se eliminó correctamente.</p><p>El bot mostrará un nuevo código QR en <strong>5 segundos</strong>.</p><a href="/" class="btn btn-primary mt-3">Ir al inicio</a></div></div></body></html>`);
         } catch (e) { res.end("Error al borrar sesión: " + e.message); }
     } else if (routename === '/notificador-estado') {
-        
+
+        const filtroVendedorNotif = query.vendedor || '';
+
         if (query.action === 'force_cobranza') {
             if (isBotReady()) {
                 checkVendedoresRecordatorio(true).catch(e => console.log(e));
             }
-            res.writeHead(302, { 'Location': '/notificador-estado' });
+            res.writeHead(302, { 'Location': '/notificador-estado' + (filtroVendedorNotif ? '?vendedor='+encodeURIComponent(filtroVendedorNotif) : '') });
             return res.end();
         }
 
@@ -1943,11 +1945,13 @@ const server = http.createServer(async (req, res) => {
                 estadisticasEjecutando = false; 
                 checkEstadisticasVendedores(true).catch(e => console.log(e));
             }
-            res.writeHead(302, { 'Location': '/notificador-estado' });
+            res.writeHead(302, { 'Location': '/notificador-estado' + (filtroVendedorNotif ? '?vendedor='+encodeURIComponent(filtroVendedorNotif) : '') });
             return res.end();
         }
 
         const total = await notificador.obtenerFacturasNoNotificadasCount();
+        const [vendedoresNotif] = await pool.execute("SELECT DISTINCT vendedor FROM tab_clientes WHERE vendedor != '' AND vendedor IS NOT NULL ORDER BY vendedor");
+        const vendOptsNotif = vendedoresNotif.map(v => `<option value="${v.vendedor}"${filtroVendedorNotif===v.vendedor?' selected':''}>${v.vendedor}</option>`).join('');
 
         res.end(`<!DOCTYPE html>
         <html>
@@ -1962,14 +1966,22 @@ const server = http.createServer(async (req, res) => {
                 <div class="card shadow-lg p-4 mx-auto" style="max-width: 600px; border-radius: 15px;">
                     <h3>📬 Notificador</h3>
                     <hr>
+                    <form class="row g-2 mb-2 align-items-end" method="GET" action="/notificador-estado">
+                        <div class="col-auto">
+                            <label class="small fw-bold">Vendedor</label>
+                            <select name="vendedor" class="form-select form-select-sm" onchange="this.form.submit()">
+                                <option value="">Todos</option>${vendOptsNotif}
+                            </select>
+                        </div>
+                    </form>
                     <p>Facturas pendientes por notificar a clientes: <strong>${total}</strong></p>
                     <p>Estado del Bot: ${isBotReady() ? '<span class="text-success">🟢 Online</span>' : '<span class="text-danger">🔴 Offline</span>'}</p>
                     <hr>
                     <h5>📊 Control Manual de Vendedores</h5>
                     <p class="text-muted small">Selecciona la notificación que deseas enviar en este momento (Saltará restricciones de fecha).</p>
                     <div class="d-grid gap-2 mt-3">
-                        <a href="/notificador-estado?action=force_cobranza" class="btn btn-warning text-dark">⚠️ Forzar Notificación de Cuentas por Cobrar</a>
-                        <a href="/notificador-estado?action=force_stats" class="btn btn-primary">📊 Forzar Envío de Estadísticas de Ventas</a>
+                        <a href="/notificador-estado?action=force_cobranza${filtroVendedorNotif ? '&vendedor='+encodeURIComponent(filtroVendedorNotif) : ''}" class="btn btn-warning text-dark">⚠️ Forzar Notificación de Cuentas por Cobrar</a>
+                        <a href="/notificador-estado?action=force_stats${filtroVendedorNotif ? '&vendedor='+encodeURIComponent(filtroVendedorNotif) : ''}" class="btn btn-primary">📊 Forzar Envío de Estadísticas de Ventas</a>
                         <a href="/" class="btn btn-outline-secondary mt-2">Volver al Menú Principal</a>
                     </div>
                 </div>
@@ -2017,8 +2029,13 @@ const server = http.createServer(async (req, res) => {
         const lunes = new Date();
         lunes.setDate(lunes.getDate() - ((lunes.getDay() + 6) % 7));
         const semanaInicio = lunes.toISOString().split('T')[0];
+        const filtroZonaRV = query.zona || '';
+        const filtroVendedorRV = query.vendedor || '';
 
-        const [clientesElegibles] = await pool.execute(`
+        const [zonasRV] = await pool.execute("SELECT DISTINCT zona FROM tab_clientes WHERE zona != '' AND zona IS NOT NULL ORDER BY zona");
+        const [vendedoresRV] = await pool.execute("SELECT DISTINCT v.nombre FROM tab_vendedores v JOIN tab_clientes c ON c.vendedor = v.nombre WHERE v.nombre != '' ORDER BY v.nombre");
+
+        let sqlRV = `
             SELECT DISTINCT c.id_cliente, c.nombres, c.celular, c.direccion, c.zona,
                    COALESCE(v.nombre, 'Sin asignar') as vendedor_nombre,
                    v.celular_vendedor
@@ -2036,9 +2053,12 @@ const server = http.createServer(async (req, res) => {
                 WHERE f.id_cliente = c.id_cliente
                   AND f.anulado = 'no'
                   AND f.pagada = 'NO'
-              )
-            ORDER BY c.nombres
-        `);
+              )`;
+        const paramsRV = [];
+        if (filtroZonaRV) { sqlRV += " AND c.zona = ?"; paramsRV.push(filtroZonaRV); }
+        if (filtroVendedorRV) { sqlRV += " AND v.nombre = ?"; paramsRV.push(filtroVendedorRV); }
+        sqlRV += " ORDER BY c.nombres";
+        const [clientesElegibles] = await pool.execute(sqlRV, paramsRV);
 
         const [yaEnviados] = await pool.execute(
             "SELECT id_cliente FROM recordatorio_visita_log WHERE semana_inicio = ?",
@@ -2066,6 +2086,8 @@ const server = http.createServer(async (req, res) => {
         }).join('');
 
         const filasLog = log.map(r => `<tr><td>${r.id}</td><td>${r.id_cliente}</td><td>${r.nombres || ''}</td><td>${r.semana_inicio}</td><td>${new Date(r.fecha_envio).toLocaleString()}</td></tr>`).join('');
+        const zonaOptsRV = zonasRV.map(z => `<option value="${z.zona}"${filtroZonaRV===z.zona?' selected':''}>${z.zona}</option>`).join('');
+        const vendOptsRV = vendedoresRV.map(v => `<option value="${v.nombre}"${filtroVendedorRV===v.nombre?' selected':''}>${v.nombre}</option>`).join('');
 
         res.end(`<!DOCTYPE html>
         <html>
@@ -2081,6 +2103,21 @@ const server = http.createServer(async (req, res) => {
                 ${query.success ? `<div class="alert alert-success">✅ ${query.success}</div>` : ''}
                 <h3>📬 Recordatorio Semanal de Visitas</h3>
                 <p class="text-muted">Semana: <strong>${semanaInicio}</strong></p>
+
+                <form class="row g-2 mb-2 p-2 bg-white rounded shadow-sm align-items-end" method="GET" action="/recordatorio-visita">
+                    <div class="col-auto">
+                        <label class="small fw-bold">Zona</label>
+                        <select name="zona" class="form-select form-select-sm" onchange="this.form.submit()">
+                            <option value="">Todas</option>${zonaOptsRV}
+                        </select>
+                    </div>
+                    <div class="col-auto">
+                        <label class="small fw-bold">Vendedor</label>
+                        <select name="vendedor" class="form-select form-select-sm" onchange="this.form.submit()">
+                            <option value="">Todos</option>${vendOptsRV}
+                        </select>
+                    </div>
+                </form>
 
                 <details class="mb-2">
                 <summary style="cursor:pointer;font-size:0.9rem">⚙️ Configurar envíos</summary>
@@ -2185,6 +2222,44 @@ const server = http.createServer(async (req, res) => {
             <td>${v.visita_realizada}</td>
         </tr>`).join('');
         const zonaOptions = zonas.map(z => `<option value="${z.zona}"${filtroZona === z.zona ? ' selected' : ''}>${z.zona}</option>`).join('');
+
+        // Calendar
+        const hoyCal = new Date();
+        const anioCal = hoyCal.getFullYear();
+        const mesCal = hoyCal.getMonth();
+        const primerDia = new Date(anioCal, mesCal, 1);
+        const ultimoDia = new Date(anioCal, mesCal + 1, 0);
+        const inicioMes = primerDia.toISOString().split('T')[0];
+        const finMes = ultimoDia.toISOString().split('T')[0];
+        const [visitasPorDia] = await pool.execute("SELECT acuerdo_visita, COUNT(*) as total FROM tab_visitas WHERE acuerdo_visita BETWEEN ? AND ? GROUP BY acuerdo_visita", [inicioMes, finMes]);
+        const calMap = {};
+        visitasPorDia.forEach(v => { calMap[v.acuerdo_visita] = v.total; });
+        const diasSemana = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+        let calRows = '';
+        let diaCelda = 1;
+        const primerDow = primerDia.getDay();
+        const totalDias = ultimoDia.getDate();
+        for (let s = 0; s < 6; s++) {
+            if (diaCelda > totalDias) break;
+            calRows += '<tr>';
+            for (let d = 0; d < 7; d++) {
+                if ((s === 0 && d < primerDow) || diaCelda > totalDias) {
+                    calRows += '<td style="padding:6px"></td>';
+                } else {
+                    const fechaStr = `${anioCal}-${String(mesCal+1).padStart(2,'0')}-${String(diaCelda).padStart(2,'0')}`;
+                    const count = calMap[fechaStr] || 0;
+                    const hoyStr = hoyCal.toISOString().split('T')[0];
+                    const cls = fechaStr === hoyStr ? 'bg-warning text-dark' : (count > 0 ? 'bg-success text-white' : '');
+                    calRows += `<td class="${cls}" style="padding:6px;cursor:pointer;border-radius:6px;text-align:center" onclick="window.location='/visitas?dia=${fechaStr}'">
+                        <strong>${diaCelda}</strong><br><small>${count > 0 ? count+' vis' : ''}</small>
+                    </td>`;
+                    diaCelda++;
+                }
+            }
+            calRows += '</tr>';
+        }
+        const meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
         res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Visitas Agendadas</title><style>body{background:#f4f7f6}.card-custom{border-radius:12px;border:none;box-shadow:0 2px 8px rgba(0,0,0,0.06)}</style></head><body class="bg-light">${header}
         <div class="container-fluid px-4 mt-3">
         <h3>📅 Agenda de Visitas</h3>
@@ -2237,6 +2312,14 @@ const server = http.createServer(async (req, res) => {
         </div>
         </div>
         </div>
+
+        <!-- Calendar -->
+        <div class="card card-custom p-3 mb-3">
+        <h5>🗓️ ${meses[mesCal]} ${anioCal}</h5>
+        <table class="table table-sm table-borderless mb-0 text-center">
+        <thead><tr>${diasSemana.map(d => `<th class="small text-muted">${d}</th>`).join('')}</tr></thead>
+        <tbody>${calRows}</tbody>
+        </table></div>
 
         <div class="card card-custom p-3">
         <div class="d-flex justify-content-between align-items-center mb-2">
@@ -2304,9 +2387,13 @@ const server = http.createServer(async (req, res) => {
                         const [clientes] = await pool.execute("SELECT id_cliente, nombres, celular FROM tab_clientes WHERE id_cliente = ?", [ids[i]]);
                         const c = clientes[0];
                         if (!c) continue;
+                        const [facturas] = await pool.execute("SELECT nro_factura, DATEDIFF(CURDATE(), fecha_reg) as dias FROM tab_facturas WHERE id_cliente = ? AND pagada='NO' AND anulado='no' ORDER BY fecha_reg ASC LIMIT 1", [c.id_cliente]);
+                        const f = facturas[0];
+                        const notaStr = f ? `#${f.nro_factura}` : 'pendiente';
+                        const diasStr = f ? `${f.dias} días` : 'varios días';
                         const jid = formatWhatsApp(c.celular);
                         if (!jid) continue;
-                        const msg = `📢 *ONE4CARS — Recordatorio de Pago* 🚗\n\nHola *${c.nombres}*, te recordamos que tienes facturas pendientes por cancelar. Te invitamos a ponerte al día para evitar interrupciones en tu servicio.\n\n💰 *Realiza tu pago a la brevedad* y sigue disfrutando de nuestros productos y atención.\n\n¡Gracias por tu preferencia! 🚀`;
+                        const msg = `📢 *ONE4CARS — Recordatorio de Pago* 🚗\n\nEstimado(a) *${c.nombres}*, le escribimos de manera cordial para recordarle que la nota ${notaStr} se encuentra vencida desde hace *${diasStr}*. Le solicitamos proceder con el pago a la brevedad para evitar suspensiones en el servicio y mantener su historial comercial al día.\n\n💰 *Realice su pago ahora* y continúe disfrutando de nuestros productos y atención preferencial.\n\nAgradecemos su pronta gestión. ¡Gracias por confiar en ONE4CARS! 🚀`;
                         await safeSendMessage(jid, { text: msg });
                         cont++;
                         await sleep(sendConfig.pauseSend);
@@ -2328,9 +2415,13 @@ const server = http.createServer(async (req, res) => {
                 for (let i = 0; i < todos.length; i++) {
                     if (i > 0 && i % bs === 0) { console.log(`[REC ESTADO] Pausa ${pb/60000}min lote ${i}/${todos.length}...`); await sleep(pb); }
                     const c = todos[i];
+                    const [facturas] = await pool.execute("SELECT nro_factura, DATEDIFF(CURDATE(), fecha_reg) as dias FROM tab_facturas WHERE id_cliente = ? AND pagada='NO' AND anulado='no' ORDER BY fecha_reg ASC LIMIT 1", [c.id_cliente]);
+                    const f = facturas[0];
+                    const notaStr = f ? `#${f.nro_factura}` : 'pendiente';
+                    const diasStr = f ? `${f.dias} días` : 'varios días';
                     const jid = formatWhatsApp(c.celular);
                     if (!jid) continue;
-                    const msg = `📢 *ONE4CARS — Recordatorio de Pago* 🚗\n\nHola *${c.nombres}*, te recordamos que tienes facturas pendientes por cancelar. Te invitamos a ponerte al día para evitar interrupciones en tu servicio.\n\n💰 *Realiza tu pago a la brevedad* y sigue disfrutando de nuestros productos y atención.\n\n¡Gracias por tu preferencia! 🚀`;
+                    const msg = `📢 *ONE4CARS — Recordatorio de Pago* 🚗\n\nEstimado(a) *${c.nombres}*, le escribimos de manera cordial para recordarle que la nota ${notaStr} se encuentra vencida desde hace *${diasStr}*. Le solicitamos proceder con el pago a la brevedad para evitar suspensiones en el servicio y mantener su historial comercial al día.\n\n💰 *Realice su pago ahora* y continúe disfrutando de nuestros productos y atención preferencial.\n\nAgradecemos su pronta gestión. ¡Gracias por confiar en ONE4CARS! 🚀`;
                     await safeSendMessage(jid, { text: msg });
                     cont++;
                     await sleep(sendConfig.pauseSend);
