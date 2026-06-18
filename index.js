@@ -739,9 +739,9 @@ function obtenerNivelRecordatorio(dias) {
     return null;
 }
 
-function obtenerTonoMensaje(nivel, f, monto, fecha) {
+function obtenerTonoMensaje(nivel, f, monto, fecha, dias) {
     if (nivel >= 60) {
-        return `🧾 *AVISO DE PAGO PENDIENTE*\n\nHola *${f.nombres}*, la factura *N° ${f.nro_factura}* emitida el *${fecha}* ya superó los 60 días de vencida con un saldo de *$${monto.toFixed(2)}*.\n\nEl retraso en el pago afecta la rotación de nuestros productos y la disponibilidad de inventario para todos nuestros clientes. Le agradecemos realizar el pago a la mayor brevedad posible.\n\nQuedamos a su disposición para cualquier duda o gestión. 🚗`;
+        return `🧾 *AVISO DE PAGO PENDIENTE*\n\nHola *${f.nombres}*, la factura *N° ${f.nro_factura}* emitida el *${fecha}* ya superó los ${dias} días de vencida con un saldo de *$${monto.toFixed(2)}*.\n\nEl retraso en el pago afecta la rotación de nuestros productos y la disponibilidad de inventario para todos nuestros clientes. Le agradecemos realizar el pago a la mayor brevedad posible.\n\nQuedamos a su disposición para cualquier duda o gestión. 🚗`;
     }
     return `🧾 *RECORDATORIO DE PAGO*\n\nHola *${f.nombres}*, le recordamos amablemente que la factura *N° ${f.nro_factura}* con fecha *${fecha}* presenta un saldo pendiente de *$${monto.toFixed(2)}*.\n\nLe agradecemos gestionar el pago para mantener su cuenta al día. Estamos a su disposición para cualquier consulta. 🚗`;
 }
@@ -770,7 +770,7 @@ async function checkFacturasVencidas() {
             if (!yaEnviado) {
                 const jid = formatWhatsApp(f.celular);
                 if (jid) {
-                    const msg = obtenerTonoMensaje(nivel, f, monto, fecha);
+                    const msg = obtenerTonoMensaje(nivel, f, monto, fecha, dias);
                     await safeSendMessage(jid, { text: msg });
                 }
                 await notificador.marcarRecordatorio(f.id_factura, nivel);
