@@ -1063,6 +1063,10 @@ async function checkEstadisticasVendedores(force = false) {
     }
 }
 
+// ===== CONFIGURACIÓN DE ENVÍOS =====
+const SEND_DEFAULTS = { batchSize: 10, pauseSend: 30000, pauseBatch: 600000 };
+let sendConfig = { ...SEND_DEFAULTS };
+
 // ===== RECORDATORIO SEMANAL DE VISITA A CLIENTES VENCIDOS =====
 let recordatorioVisitaEjecutando = false;
 
@@ -1101,15 +1105,15 @@ async function checkRecordatorioVisitaSemanal(force = false) {
         `);
 
         let cont = 0;
-        const BATCH_SIZE = 10;
-        const PAUSE_MS = 600000;
+        const batchSize = sendConfig.batchSize;
+        const pauseBatch = sendConfig.pauseBatch;
 
         for (let i = 0; i < clientes.length; i++) {
             const c = clientes[i];
 
-            if (i > 0 && i % BATCH_SIZE === 0) {
-                console.log(`[RECORDATORIO VISITA] Pausa de ${PAUSE_MS/60000}min tras lote ${i}/${clientes.length}...`);
-                await sleep(PAUSE_MS);
+            if (i > 0 && i % batchSize === 0) {
+                console.log(`[RECORDATORIO VISITA] Pausa ${pauseBatch/60000}min tras lote ${i}/${clientes.length}...`);
+                await sleep(pauseBatch);
             }
 
             const [yaEnviado] = await pool.execute(
@@ -1181,7 +1185,7 @@ Estaremos encantados de coordinar una visita para conocer tus necesidades en det
             } catch (e) {
                 console.log(`[RECORDATORIO VISITA] Error DB con ${c.nombres}:`, e.message);
             }
-            await sleep(10000);
+            await sleep(sendConfig.pauseSend);
         }
 
         console.log(`[RECORDATORIO VISITA] ${cont}/${clientes.length} cliente(s) notificado(s) esta semana.`);
@@ -1200,15 +1204,15 @@ async function checkRecordatorioVisitaSemanalPorIds(ids) {
     lunes.setDate(lunes.getDate() - ((lunes.getDay() + 6) % 7));
     const semanaInicio = lunes.toISOString().split('T')[0];
     let cont = 0;
-    const BATCH_SIZE = 10;
-    const PAUSE_MS = 30000;
+    const batchSize = sendConfig.batchSize;
+    const pauseBatch = sendConfig.pauseBatch;
 
     for (let i = 0; i < ids.length; i++) {
         const id = ids[i];
 
-        if (i > 0 && i % BATCH_SIZE === 0) {
-            console.log(`[RECORDATORIO VISITA] Pausa de ${PAUSE_MS/1000}s tras lote ${i}/${ids.length} manual...`);
-            await sleep(PAUSE_MS);
+        if (i > 0 && i % batchSize === 0) {
+            console.log(`[RECORDATORIO VISITA] Pausa ${pauseBatch/60000}min tras lote ${i}/${ids.length} manual...`);
+            await sleep(pauseBatch);
         }
 
         const [clientes] = await pool.execute(`
@@ -1248,7 +1252,7 @@ async function checkRecordatorioVisitaSemanalPorIds(ids) {
             );
             await pool.execute("INSERT INTO recordatorio_visita_log (id_cliente, semana_inicio) VALUES (?, ?)", [c.id_cliente, semanaInicio]);
             cont++;
-            await sleep(10000);
+            await sleep(sendConfig.pauseSend);
         } catch (e) {
             console.log(`[RECORDATORIO VISITA] Error DB con ${c.nombres}:`, e.message);
         }
@@ -1985,10 +1989,20 @@ const server = http.createServer(async (req, res) => {
                 const ids = data.clientes || [];
                 if (ids.length === 0) { res.end("Ningún cliente seleccionado."); return; }
                 res.end(`✅ Envío iniciado para ${ids.length} cliente(s).`);
-                // Fire-and-forget: the sends continue in background
                 recordatorioVisitaEjecutando = false;
                 setTimeout(() => checkRecordatorioVisitaSemanalPorIds(ids), 500);
             } catch (e) { res.end("Error: " + e.message); }
+        });
+    } else if (routename === '/set-send-config' && req.method === 'POST') {
+        let b = ''; req.on('data', c => b += c);
+        req.on('end', () => {
+            try {
+                const data = JSON.parse(b);
+                if (data.batchSize) sendConfig.batchSize = parseInt(data.batchSize) || SEND_DEFAULTS.batchSize;
+                if (data.pauseSend) sendConfig.pauseSend = parseInt(data.pauseSend) || SEND_DEFAULTS.pauseSend;
+                if (data.pauseBatch) sendConfig.pauseBatch = parseInt(data.pauseBatch) || SEND_DEFAULTS.pauseBatch;
+                res.end("OK");
+            } catch (e) { res.end("Error"); }
         });
     } else if (routename === '/recordatorio-visita') {
         if (query.action === 'force') {
@@ -2068,6 +2082,16 @@ const server = http.createServer(async (req, res) => {
                 <h3>📬 Recordatorio Semanal de Visitas</h3>
                 <p class="text-muted">Semana: <strong>${semanaInicio}</strong></p>
 
+                <details class="mb-2">
+                <summary style="cursor:pointer;font-size:0.9rem">⚙️ Configurar envíos</summary>
+                <div class="card card-body p-2 mb-2">
+                <div class="row g-2 align-items-end">
+                    <div class="col-auto"><label class="small">Bloque</label><input type="number" id="cfgBatch" class="form-control form-control-sm" value="${sendConfig.batchSize}" style="width:80px"></div>
+                    <div class="col-auto"><label class="small">Pausa/msg (seg)</label><input type="number" id="cfgPauseSend" class="form-control form-control-sm" value="${sendConfig.pauseSend/1000}" style="width:90px"></div>
+                    <div class="col-auto"><label class="small">Pausa/lote (min)</label><input type="number" id="cfgPauseBatch" class="form-control form-control-sm" value="${sendConfig.pauseBatch/60000}" style="width:90px"></div>
+                    <div class="col-auto"><button onclick="guardarConfig()" class="btn btn-sm btn-outline-dark">Guardar</button></div>
+                </div></div></details>
+
                 <div class="d-flex gap-2 mb-3">
                     <button id="selectAll" class="btn btn-outline-primary btn-sm">✅ Seleccionar Todos</button>
                     <button id="deselectAll" class="btn btn-outline-secondary btn-sm">❌ Desseleccionar</button>
@@ -2124,6 +2148,10 @@ const server = http.createServer(async (req, res) => {
                 } catch(e) { alert('Error: ' + e.message); }
                 this.disabled = false; this.textContent = 'Enviar a Seleccionados';
             });
+            async function guardarConfig(){
+                const d={batchSize:document.getElementById('cfgBatch').value,pauseSend:document.getElementById('cfgPauseSend').value*1000,pauseBatch:document.getElementById('cfgPauseBatch').value*60000};
+                try{await fetch('/set-send-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});alert('Config guardada.');}catch(e){alert('Error: '+e.message);}
+            }
             </script>
         </body>
         </html>`);
@@ -2145,11 +2173,14 @@ const server = http.createServer(async (req, res) => {
             <td><input type="checkbox" class="visita-check" value="${v.id_visita}"></td>
             <td>${v.id_visita}</td>
             <td>${v.fecha_reg || ''}</td>
-            <td>${v.nombres || ''}</td>
+            <td><a href="#" onclick="return reprogramar(${v.id_visita},'${v.nombres || ''}')" title="Reprogramar">${v.nombres || ''}</a></td>
             <td>${v.celular || ''}</td>
             <td>${v.nombre || ''}</td>
             <td>${v.zona || ''}</td>
-            <td>${v.acuerdo_visita || ''}</td>
+            <td><span id="fecha-${v.id_visita}">${v.acuerdo_visita || ''}</span>
+                <input type="date" id="nueva-fecha-${v.id_visita}" style="display:none" class="form-control form-control-sm d-inline" style="width:auto">
+                <button id="btn-repro-${v.id_visita}" style="display:none" class="btn btn-sm btn-success" onclick="guardarRepro(${v.id_visita})">✔</button>
+            </td>
             <td>${v.motivo ? v.motivo.substring(0, 40) : ''}</td>
             <td>${v.visita_realizada}</td>
         </tr>`).join('');
@@ -2190,19 +2221,19 @@ const server = http.createServer(async (req, res) => {
         <!-- Move visits -->
         <div class="col-md-4">
         <div class="card card-custom p-3">
-        <form class="row g-2 align-items-end" method="POST" action="/mover-visitas">
+        <div class="row g-2 align-items-end">
             <div class="col-5">
                 <label class="small fw-bold">De fecha</label>
-                <input type="date" name="desde" class="form-control form-control-sm" required>
+                <input type="date" id="mvDesde" class="form-control form-control-sm">
             </div>
             <div class="col-5">
                 <label class="small fw-bold">A fecha</label>
-                <input type="date" name="hasta" class="form-control form-control-sm" required>
+                <input type="date" id="mvHasta" class="form-control form-control-sm">
             </div>
             <div class="col-2">
-                <button type="submit" class="btn btn-sm btn-warning">Mover ➡</button>
+                <button onclick="moverVisitas()" class="btn btn-sm btn-warning">Mover ➡</button>
             </div>
-        </form>
+        </div>
         </div>
         </div>
         </div>
@@ -2218,7 +2249,43 @@ const server = http.createServer(async (req, res) => {
         <tbody>${rows || '<tr><td colspan="10" class="text-center text-muted">Sin visitas</td></tr>'}</tbody>
         </table></div></div>
         <a href="/" class="btn btn-outline-secondary mt-2">⬅ Volver</a>
-        </div></body></html>`);
+        </div>
+        <script>
+        function reprogramar(id, nombre){
+            document.getElementById('fecha-'+id).style.display='none';
+            document.getElementById('nueva-fecha-'+id).style.display='inline';
+            document.getElementById('btn-repro-'+id).style.display='inline';
+            return false;
+        }
+        async function guardarRepro(id){
+            const nuevaFecha=document.getElementById('nueva-fecha-'+id).value;
+            if(!nuevaFecha)return alert("Selecciona una fecha.");
+            try{
+                const r=await fetch('/reprogramar-visita',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id_visita:id,nueva_fecha:nuevaFecha})});
+                const t=await r.text();alert(t);location.reload();
+            }catch(e){alert('Error: '+e.message);}
+        }
+        async function moverVisitas(){
+            const desde=document.getElementById('mvDesde').value;
+            const hasta=document.getElementById('mvHasta').value;
+            if(!desde||!hasta)return alert("Selecciona ambas fechas.");
+            if(!confirm("Mover TODAS las visitas de "+desde+" a "+hasta+"?"))return;
+            try{
+                const r=await fetch('/mover-visitas',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({desde,hasta})});
+                const t=await r.text();alert(t);location.reload();
+            }catch(e){alert('Error: '+e.message);}
+        }
+        </script>
+        </body></html>`);
+    } else if (routename === '/reprogramar-visita' && req.method === 'POST') {
+        let b = ''; req.on('data', c => b += c);
+        req.on('end', async () => {
+            try {
+                const data = JSON.parse(b);
+                const [r] = await pool.execute("UPDATE tab_visitas SET acuerdo_visita = ? WHERE id_visita = ?", [data.nueva_fecha, data.id_visita]);
+                res.end(`✅ Visita #${data.id_visita} reprogramada para ${data.nueva_fecha}.`);
+            } catch (e) { res.end("Error: " + e.message); }
+        });
     } else if (routename === '/enviar-recordatorio-estado' && req.method === 'POST') {
         if (!isBotReady()) { res.end("Bot no listo."); return; }
         let b = ''; req.on('data', c => b += c);
@@ -2230,8 +2297,11 @@ const server = http.createServer(async (req, res) => {
                 res.end(`✅ Envío iniciado para ${ids.length} cliente(s).`);
                 setTimeout(async () => {
                     let cont = 0;
-                    for (const id of ids) {
-                        const [clientes] = await pool.execute("SELECT id_cliente, nombres, celular FROM tab_clientes WHERE id_cliente = ?", [id]);
+                    const bs = sendConfig.batchSize;
+                    const pb = sendConfig.pauseBatch;
+                    for (let i = 0; i < ids.length; i++) {
+                        if (i > 0 && i % bs === 0) { console.log(`[REC ESTADO] Pausa ${pb/60000}min lote ${i}/${ids.length}...`); await sleep(pb); }
+                        const [clientes] = await pool.execute("SELECT id_cliente, nombres, celular FROM tab_clientes WHERE id_cliente = ?", [ids[i]]);
                         const c = clientes[0];
                         if (!c) continue;
                         const jid = formatWhatsApp(c.celular);
@@ -2239,7 +2309,7 @@ const server = http.createServer(async (req, res) => {
                         const msg = `📢 *ONE4CARS — Recordatorio de Pago* 🚗\n\nHola *${c.nombres}*, te recordamos que tienes facturas pendientes por cancelar. Te invitamos a ponerte al día para evitar interrupciones en tu servicio.\n\n💰 *Realiza tu pago a la brevedad* y sigue disfrutando de nuestros productos y atención.\n\n¡Gracias por tu preferencia! 🚀`;
                         await safeSendMessage(jid, { text: msg });
                         cont++;
-                        await sleep(10000);
+                        await sleep(sendConfig.pauseSend);
                     }
                     console.log(`[RECORDATORIO ESTADO] ${cont}/${ids.length} enviado(s).`);
                 }, 500);
@@ -2253,13 +2323,17 @@ const server = http.createServer(async (req, res) => {
             setTimeout(async () => {
                 const [todos] = await pool.execute("SELECT DISTINCT c.id_cliente, c.nombres, c.celular FROM tab_clientes c JOIN tab_facturas f ON c.id_cliente = f.id_cliente WHERE f.pagada='NO' AND f.anulado='no' AND c.activo='si'");
                 let cont = 0;
-                for (const c of todos) {
+                const bs = sendConfig.batchSize;
+                const pb = sendConfig.pauseBatch;
+                for (let i = 0; i < todos.length; i++) {
+                    if (i > 0 && i % bs === 0) { console.log(`[REC ESTADO] Pausa ${pb/60000}min lote ${i}/${todos.length}...`); await sleep(pb); }
+                    const c = todos[i];
                     const jid = formatWhatsApp(c.celular);
                     if (!jid) continue;
                     const msg = `📢 *ONE4CARS — Recordatorio de Pago* 🚗\n\nHola *${c.nombres}*, te recordamos que tienes facturas pendientes por cancelar. Te invitamos a ponerte al día para evitar interrupciones en tu servicio.\n\n💰 *Realiza tu pago a la brevedad* y sigue disfrutando de nuestros productos y atención.\n\n¡Gracias por tu preferencia! 🚀`;
                     await safeSendMessage(jid, { text: msg });
                     cont++;
-                    await sleep(10000);
+                    await sleep(sendConfig.pauseSend);
                 }
                 console.log(`[RECORDATORIO ESTADO] Forzado: ${cont} enviado(s).`);
             }, 500);
@@ -2298,6 +2372,15 @@ const server = http.createServer(async (req, res) => {
         <div class="container-fluid px-4 mt-3">
         ${query.error ? `<div class="alert alert-danger">❌ ${query.error}</div>` : ''}
         ${query.success ? `<div class="alert alert-success">✅ ${query.success}</div>` : ''}
+        <details class="mb-2" style="max-width:500px">
+        <summary style="cursor:pointer;font-size:0.9rem">⚙️ Configurar envíos</summary>
+        <div class="card card-body p-2 mb-2">
+        <div class="row g-2 align-items-end">
+            <div class="col-auto"><label class="small">Bloque</label><input type="number" id="cfgBatch" class="form-control form-control-sm" value="${sendConfig.batchSize}" style="width:80px"></div>
+            <div class="col-auto"><label class="small">Pausa/msg (seg)</label><input type="number" id="cfgPauseSend" class="form-control form-control-sm" value="${sendConfig.pauseSend/1000}" style="width:90px"></div>
+            <div class="col-auto"><label class="small">Pausa/lote (min)</label><input type="number" id="cfgPauseBatch" class="form-control form-control-sm" value="${sendConfig.pauseBatch/60000}" style="width:90px"></div>
+            <div class="col-auto"><button onclick="guardarConfigRec()" class="btn btn-sm btn-outline-dark">Guardar</button></div>
+        </div></div></details>
         <div class="card card-custom p-4 mb-4">
         <div class="row align-items-end">
             <div class="col-md-4"><h4>📢 Recordatorios de Pago</h4><p class="text-muted small">Clientes con facturas vencidas.</p></div>
@@ -2333,6 +2416,10 @@ const server = http.createServer(async (req, res) => {
         </div></div>
         <script>
         function toggleAllRec(){const ch=document.getElementById('selectAllRec').checked;document.querySelectorAll('.cliente-check-rec').forEach(c=>c.checked=ch);}
+        async function guardarConfigRec(){
+            const d={batchSize:document.getElementById('cfgBatch').value,pauseSend:document.getElementById('cfgPauseSend').value*1000,pauseBatch:document.getElementById('cfgPauseBatch').value*60000};
+            try{await fetch('/set-send-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});alert('Config guardada.');}catch(e){alert('Error: '+e.message);}
+        }
         async function enviarRecordatorio(){
             const sel=Array.from(document.querySelectorAll('.cliente-check-rec:checked')).map(c=>c.value);
             if(sel.length===0)return alert("Selecciona al menos un cliente.");
