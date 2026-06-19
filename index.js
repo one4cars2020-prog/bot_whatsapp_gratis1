@@ -2281,14 +2281,16 @@ const server = http.createServer(async (req, res) => {
         const [visitas] = await pool.execute("SELECT a.id_agenda, a.id_cliente, a.fecha, a.hora, a.estado, a.frecuencia_dias, a.observacion, c.nombres, c.celular, c.zona, c.vendedor FROM tab_agenda_visitas a JOIN tab_clientes c ON a.id_cliente = c.id_cliente " + whereClause + " ORDER BY a.fecha ASC, a.hora ASC LIMIT 200", params);
         const estadoBadge = { pendiente:'bg-warning text-dark', cumplida:'bg-success', pago:'bg-success', cerrado:'bg-secondary', no_contesto:'bg-warning text-dark', ausente:'bg-warning text-dark', pospuso:'bg-warning text-dark' };
         const estadoLabel = { pendiente:'Pendiente', cumplida:'Cumplida', pago:'Pagó', cerrado:'Cerrado', no_contesto:'No Contestó', ausente:'Ausente', pospuso:'Pospuso' };
+        const fmtTel = (t) => { const c = t.replace(/\D/g,''); return c.startsWith('58') ? c : '58'+c; };
         const rows = visitas.map(v => {
             const eb = estadoBadge[v.estado] || 'bg-warning text-dark';
             const el = estadoLabel[v.estado] || 'Pendiente';
+            const wa = fmtTel(v.celular);
             return `<tr>
             <td><input type="checkbox" class="visita-check" value="${v.id_agenda}"></td>
             <td>${v.id_agenda}</td>
             <td>${v.fecha || ''}</td>
-            <td><a href="?vista=cliente&id_cliente=${v.id_cliente}" target="_blank">${v.nombres || ''}</a></td>
+            <td><a href="?vista=cliente&id_cliente=${v.id_cliente}" target="_blank">${v.nombres || ''}</a> <a href="#" onclick="return verHistorial(${v.id_cliente})" title="Historial"><i class="bi bi-clock-history text-secondary ms-1" style="font-size:0.7rem"></i></a></td>
             <td>${v.celular || ''}</td>
             <td>${v.vendedor || ''}</td>
             <td>${v.zona || ''}</td>
@@ -2298,6 +2300,36 @@ const server = http.createServer(async (req, res) => {
             </td>
             <td>${v.observacion ? v.observacion.substring(0, 40) : ''}</td>
             <td><span class="badge ${eb}">${el}</span></td>
+            <td class="no-print">
+                <div class="dropdown">
+                    <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" style="font-size:0.7rem;padding:2px 6px;">
+                        <i class="bi bi-gear"></i>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end" style="font-size:0.75rem;min-width:170px;">
+                        <li><a class="dropdown-item" href="https://wa.me/${wa}" target="_blank"><i class="bi bi-whatsapp text-success me-2"></i>WhatsApp</a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li class="dropdown-header">Resultado de Visita</li>
+                        <li><a class="dropdown-item" href="#" onclick="return accionVisita(${v.id_agenda},'pago')"><i class="bi bi-cash text-success me-2"></i>Pagó</a></li>
+                        <li><a class="dropdown-item" href="#" onclick="return accionVisita(${v.id_agenda},'no_contesto')"><i class="bi bi-telephone-x text-warning me-2"></i>No Contestó</a></li>
+                        <li><a class="dropdown-item" href="#" onclick="return accionVisita(${v.id_agenda},'ausente')"><i class="bi bi-person-x text-warning me-2"></i>Ausente</a></li>
+                        <li><a class="dropdown-item" href="#" onclick="return accionVisita(${v.id_agenda},'pospuso')"><i class="bi bi-calendar-x text-warning me-2"></i>Pospuso</a></li>
+                        <li><a class="dropdown-item" href="#" onclick="return accionVisita(${v.id_agenda},'cerrado')"><i class="bi bi-lock text-danger me-2"></i>Cerrado</a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><a class="dropdown-item" href="#" onclick="return posponerVisita(${v.id_agenda})"><i class="bi bi-skip-forward text-warning me-2"></i>Posponer</a></li>
+                        <li><a class="dropdown-item" href="#" onclick="return reprogramar(${v.id_agenda})"><i class="bi bi-calendar-event text-info me-2"></i>Cambiar Fecha</a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li class="dropdown-header">Frecuencia</li>
+                        <li><a class="dropdown-item" href="#" onclick="return asignaFrec(${v.id_agenda},1)">Diario</a></li>
+                        <li><a class="dropdown-item" href="#" onclick="return asignaFrec(${v.id_agenda},7)">Semanal</a></li>
+                        <li><a class="dropdown-item" href="#" onclick="return asignaFrec(${v.id_agenda},15)">Quincenal</a></li>
+                        <li><a class="dropdown-item" href="#" onclick="return asignaFrec(${v.id_agenda},30)">Mensual</a></li>
+                        <li><a class="dropdown-item" href="#" onclick="return asignaFrec(${v.id_agenda},60)">Bimestral</a></li>
+                        <li><a class="dropdown-item" href="#" onclick="return asignaFrec(${v.id_agenda},90)">Trimestral</a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><a class="dropdown-item text-danger" href="#" onclick="return eliminarVisita(${v.id_agenda})"><i class="bi bi-trash me-2"></i>Eliminar</a></li>
+                    </ul>
+                </div>
+            </td>
         </tr>`}).join('');
         const zonaOptions = zonas.map(z => `<option value="${z.zona}"${filtroZona === z.zona ? ' selected' : ''}>${z.zona}</option>`).join('');
 
@@ -2338,7 +2370,7 @@ const server = http.createServer(async (req, res) => {
         }
         const meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 
-        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Visitas Agendadas</title><style>body{background:#f4f7f6}.card-custom{border-radius:12px;border:none;box-shadow:0 2px 8px rgba(0,0,0,0.06)}@media print{body{background:#fff}.no-print,.no-print-table{display:none!important}.card-custom{box-shadow:none;border:1px solid #ddd}table{font-size:11px}td:first-child,th:first-child{display:none}}</style></head><body class="bg-light">${header}
+        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"><title>Visitas Agendadas</title><style>body{background:#f4f7f6}.card-custom{border-radius:12px;border:none;box-shadow:0 2px 8px rgba(0,0,0,0.06)}@media print{body{background:#fff}.no-print,.no-print-table{display:none!important}.card-custom{box-shadow:none;border:1px solid #ddd}table{font-size:11px}td:first-child,th:first-child{display:none}}</style></head><body class="bg-light">${header}
         <div class="container-fluid px-4 mt-3">
         <h3>📅 Agenda de Visitas</h3>
 
@@ -2405,10 +2437,25 @@ const server = http.createServer(async (req, res) => {
             <h5>Visitas (${visitas.length})</h5>
             <div><input class="form-check-input" type="checkbox" id="checkAllVis" onchange="document.querySelectorAll('.visita-check').forEach(c=>c.checked=this.checked)"> <label class="form-check-label small">Sel. Todos</label></div>
         </div>
+        <!-- Metrics -->
+        ${(()=>{
+            const totalVis = visitas.length;
+            const cumplidas = visitas.filter(v => v.estado === 'cumplida' || v.estado === 'pago').length;
+            const pct = totalVis > 0 ? Math.round(cumplidas/totalVis*100) : 0;
+            const vendedores = {};
+            visitas.forEach(v => { const nom = v.vendedor || 'N/A'; vendedores[nom] = (vendedores[nom]||0)+1; });
+            const vendedorTop = Object.entries(vendedores).sort((a,b)=>b[1]-a[1]).slice(0,3);
+            return `<div class="row g-2 mb-3 no-print">
+                <div class="col-6 col-md-3"><div class="border rounded p-2 text-center bg-light"><small class="text-muted">Total</small><div class="fw-bold fs-5">${totalVis}</div></div></div>
+                <div class="col-6 col-md-3"><div class="border rounded p-2 text-center bg-light"><small class="text-muted">Cumplidas</small><div class="fw-bold fs-5 text-success">${cumplidas} <small class="fs-6">(${pct}%)</small></div></div></div>
+                <div class="col-6 col-md-3"><div class="border rounded p-2 text-center bg-light"><small class="text-muted">Pendientes</small><div class="fw-bold fs-5 text-warning">${totalVis - cumplidas}</div></div></div>
+                <div class="col-6 col-md-3"><div class="border rounded p-2 text-center bg-light"><small class="text-muted">Top</small><div class="fw-bold fs-6">${vendedorTop.map(([n,c]) => n.split(' ')[0]+'('+c+')').join(', ')}</div></div></div>
+            </div>`;
+        })()}
         <div class="table-responsive">
         <table class="table table-hover table-sm align-middle">
-        <thead class="table-light"><tr><th style="width:36px">Sel</th><th>ID</th><th>Fecha</th><th>Cliente</th><th>Celular</th><th>Vendedor</th><th>Zona</th><th>Acuerdo</th><th>Observación</th><th>Estado</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="10" class="text-center text-muted">Sin visitas</td></tr>'}</tbody>
+        <thead class="table-light"><tr><th style="width:36px">Sel</th><th>ID</th><th>Fecha</th><th>Cliente</th><th>Celular</th><th>Vendedor</th><th>Zona</th><th>Acuerdo</th><th>Observación</th><th>Estado</th><th style="width:60px" class="no-print">Acción</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="11" class="text-center text-muted">Sin visitas</td></tr>'}</tbody>
         </table></div></div>
         <a href="/" class="btn btn-outline-secondary mt-2 no-print">⬅ Volver</a>
         </div>
@@ -2437,8 +2484,70 @@ const server = http.createServer(async (req, res) => {
                 const t=await r.text();alert(t);location.reload();
             }catch(e){alert('Error: '+e.message);}
         }
+        async function accionVisita(id, estado){
+            if(!confirm("¿Marcar visita #"+id+" como "+estado+"?"))return false;
+            try{
+                const r=await fetch('/accion-visita',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id_agenda:id,estado})});
+                const t=await r.text();alert(t);if(t.includes('✅'))location.reload();
+            }catch(e){alert('Error: '+e.message);}
+            return false;
+        }
+        async function posponerVisita(id){
+            if(!confirm("¿Posponer visita #"+id+" al próximo día hábil?"))return false;
+            try{
+                const r=await fetch('/accion-visita',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id_agenda:id,estado:'posponer'})});
+                const t=await r.text();alert(t);if(t.includes('✅'))location.reload();
+            }catch(e){alert('Error: '+e.message);}
+            return false;
+        }
+        async function asignaFrec(id, dias){
+            if(!confirm("¿Asignar frecuencia de "+dias+" días a visita #"+id+"?"))return false;
+            try{
+                const r=await fetch('/accion-visita',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id_agenda:id,estado:'frecuencia',frecuencia_dias:dias})});
+                const t=await r.text();alert(t);if(t.includes('✅'))location.reload();
+            }catch(e){alert('Error: '+e.message);}
+            return false;
+        }
+        async function eliminarVisita(id){
+            if(!confirm("¿Eliminar visita #"+id+"?"))return false;
+            try{
+                const r=await fetch('/accion-visita',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id_agenda:id,estado:'eliminar'})});
+                const t=await r.text();alert(t);if(t.includes('✅'))location.reload();
+            }catch(e){alert('Error: '+e.message);}
+            return false;
+        }
         </script>
         </body></html>`);
+    } else if (routename === '/accion-visita' && req.method === 'POST') {
+        let b = ''; req.on('data', c => b += c);
+        req.on('end', async () => {
+            try {
+                const data = JSON.parse(b);
+                const { id_agenda, estado } = data;
+                if (estado === 'eliminar') {
+                    await dualExecute("DELETE FROM tab_agenda_visitas WHERE id_agenda = ?", [id_agenda]);
+                    res.end(`✅ Visita #${id_agenda} eliminada.`);
+                } else if (estado === 'posponer') {
+                    const [rows] = await pool.execute("SELECT fecha FROM tab_agenda_visitas WHERE id_agenda = ?", [id_agenda]);
+                    if (rows.length === 0) { res.end("❌ Visita no encontrada."); return; }
+                    let nueva = new Date(rows[0].fecha);
+                    nueva.setDate(nueva.getDate() + 1);
+                    while (nueva.getDay() === 0 || nueva.getDay() === 6) nueva.setDate(nueva.getDate() + 1);
+                    const nuevaStr = nueva.toISOString().split('T')[0];
+                    await dualExecute("UPDATE tab_agenda_visitas SET fecha = ? WHERE id_agenda = ?", [nuevaStr, id_agenda]);
+                    res.end(`✅ Visita #${id_agenda} pospuesta al ${nuevaStr}.`);
+                } else if (estado === 'frecuencia') {
+                    const fd = parseInt(data.frecuencia_dias) || 0;
+                    await dualExecute("UPDATE tab_agenda_visitas SET frecuencia_dias = ?, fecha_origen = COALESCE(fecha_origen, CURDATE()) WHERE id_agenda = ?", [fd, id_agenda]);
+                    res.end(`✅ Frecuencia de ${fd} días asignada a visita #${id_agenda}.`);
+                } else if (['pago','cumplida','no_contesto','ausente','pospuso','cerrado'].includes(estado)) {
+                    await dualExecute("UPDATE tab_agenda_visitas SET estado = ? WHERE id_agenda = ?", [estado, id_agenda]);
+                    res.end(`✅ Visita #${id_agenda} marcada como ${estado}.`);
+                } else {
+                    res.end("❌ Acción no válida.");
+                }
+            } catch (e) { res.end("Error: " + e.message); }
+        });
     } else if (routename === '/reprogramar-visita' && req.method === 'POST') {
         let b = ''; req.on('data', c => b += c);
         req.on('end', async () => {
@@ -2660,8 +2769,8 @@ const server = http.createServer(async (req, res) => {
                 INDEX idx_fecha_estado (fecha, estado),
                 INDEX idx_cliente (id_cliente)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_spanish_ci`;
-            await poolLocal.execute(sqlCreate);
-            await pool.execute(sqlCreate);
+            try { await poolLocal.execute(sqlCreate); } catch(e) {}
+            try { await pool.execute(sqlCreate); } catch(e) {}
             const [locales] = await poolLocal.execute("SELECT * FROM tab_agenda_visitas ORDER BY id_agenda");
             let insertados = 0;
             for (const rec of locales) {
@@ -2678,11 +2787,24 @@ const server = http.createServer(async (req, res) => {
             }
             res.end(`<html><body style="font-family:sans-serif;padding:20px"><h2>✅ Sincronización completada</h2><p>Registros locales: ${locales.length}</p><p>Copiados a remoto: ${insertados}</p><p>Ya existían en remoto: ${locales.length - insertados}</p><a href="/" style="display:inline-block;margin-top:12px;padding:8px 20px;background:#333;color:#fff;border-radius:6px;text-decoration:none">Volver</a></body></html>`);
         } catch (e) { res.end("Error: " + e.message); }
+    } else if (routename === '/historial-cliente') {
+        const idCliente = parseInt(url.searchParams.get('id_cliente')) || 0;
+        if (!idCliente) { res.end(JSON.stringify([])); return; }
+        try {
+            const [rows] = await pool.execute("SELECT a.id_agenda, a.fecha, a.estado, a.observacion FROM tab_agenda_visitas a WHERE a.id_cliente = ? ORDER BY a.fecha DESC LIMIT 20", [idCliente]);
+            res.end(JSON.stringify(rows));
+        } catch (e) { res.end(JSON.stringify([])); }
     } else {
         const [zonas] = await pool.execute("SELECT DISTINCT zona FROM tab_clientes WHERE zona != '' AND zona IS NOT NULL ORDER BY zona");
         const zonaOptsMain = zonas.map(z => `<option value="${z.zona}">${z.zona}</option>`).join('');
         const [stats] = await pool.execute("SELECT COUNT(*) as total FROM tab_agenda_visitas WHERE estado IN ('pendiente','no_contesto','ausente','pospuso') OR estado IS NULL");
         const pendientes = stats[0]?.total || 0;
+        const hoyStr = new Date().toISOString().split('T')[0];
+        const [hoyVis] = await pool.execute("SELECT a.id_agenda, a.id_cliente, a.fecha, a.hora, c.nombres, c.celular, c.zona, c.direccion, c.vendedor FROM tab_agenda_visitas a JOIN tab_clientes c ON a.id_cliente = c.id_cliente WHERE a.fecha = ? AND (a.estado IN ('pendiente','no_contesto','ausente','pospuso') OR a.estado IS NULL) ORDER BY c.zona, c.nombres", [hoyStr]);
+        const hoyTotal = hoyVis.length;
+        const hoyZonas = [...new Set(hoyVis.map(v => v.zona))];
+        const hoyMapLink = hoyVis.map(v => encodeURIComponent(v.direccion || v.nombres)).filter(Boolean).join('/');
+        const hoyGmaps = hoyMapLink ? `https://www.google.com/maps/dir/${hoyMapLink}` : '';
         res.end(`<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -2739,6 +2861,31 @@ ${qrCodeData.startsWith('data') ? `
 </div>
 </div>
 ` : ''}
+<div class="row mb-3 g-2">
+<div class="col-12 col-sm-6">
+<div class="card-dash">
+<div class="card-body d-flex align-items-center justify-content-between">
+<div>
+<h6 class="text-white-50 mb-1" style="font-size:0.75rem"><i class="bi bi-calendar-day me-1"></i>Visitas de Hoy</h6>
+<span class="fw-bold" style="font-size:1.3rem">${hoyTotal}</span>
+<small class="text-white-50 ms-2">${hoyZonas.length} zona(s)</small>
+</div>
+<div class="d-flex gap-2">
+${hoyGmaps ? `<a href="${hoyGmaps}" target="_blank" class="btn btn-sm" style="background:rgba(25,135,84,0.2);color:#75b798;border-radius:12px"><i class="bi bi-geo-alt-fill me-1"></i>Salir a Visitar</a>` : ''}
+<a href="/visitas?fecha=${hoyStr}" class="btn btn-sm" style="background:rgba(13,110,253,0.2);color:#6ea8fe;border-radius:12px"><i class="bi bi-list-ul me-1"></i>Ver</a>
+</div>
+</div>
+</div>
+</div>
+${hoyVis.length > 0 ? `
+<div class="col-12 col-sm-6">
+<div class="card-dash">
+<div class="card-body" style="max-height:100px;overflow-y:auto">
+<div style="font-size:0.7rem;color:rgba(255,255,255,0.5)">${hoyVis.slice(0,6).map(v => `<span class="me-3 d-inline-block"><span style="color:#${v.zona ? ['f5a','6ea','8f8','f88','8af','fa8','af8','faf','aaf','ff8'][Math.abs(v.zona.charCodeAt(0)||0)%10] : 'aaa'}">●</span> ${v.nombres.split(' ').slice(0,2).join(' ')} ${v.zona ? '('+v.zona+')' : ''}</span>`).join('')}${hoyVis.length > 6 ? `<span class="text-white-50">+${hoyVis.length-6} más</span>` : ''}</div>
+</div>
+</div>
+</div>` : ''}
+</div>
 <div class="row g-3">
 <div class="col-6 col-sm-4 col-md-3">
 <a href="/cobranza" class="text-decoration-none">
