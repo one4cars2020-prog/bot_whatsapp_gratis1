@@ -1912,7 +1912,7 @@ async function startBot() {
 const server = http.createServer(async (req, res) => {
     const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const query = Object.fromEntries(parsedUrl.searchParams.entries());
-    const header = `<nav class="navbar navbar-dark bg-dark mb-4 shadow"><div class="container"><a class="navbar-brand fw-bold" href="/">ONE4CARS ADMIN</a></div></nav>`;
+    const header = `<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"><nav class="navbar navbar-dark mb-4 shadow" style="background:linear-gradient(135deg,#0f0c29,#302b63);border-bottom:1px solid rgba(255,255,255,0.08)"><div class="container"><a class="navbar-brand fw-bold" href="/" style="letter-spacing:-0.3px"><i class="bi bi-speedometer2 me-2"></i>ONE4CARS</a></div></nav>`;
     const routename = parsedUrl.pathname;
 
     if (routename === '/cobranza') {
@@ -2631,60 +2631,216 @@ const server = http.createServer(async (req, res) => {
     } else {
         const [zonas] = await pool.execute("SELECT DISTINCT zona FROM tab_clientes WHERE zona != '' AND zona IS NOT NULL ORDER BY zona");
         const zonaOptsMain = zonas.map(z => `<option value="${z.zona}">${z.zona}</option>`).join('');
-        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="30"><title>Admin ONE4CARS</title></head><body style="background-color: #f4f7f6;">${header}
-        <div class="container">
-        <div class="row">
-        <!-- Bot status -->
-        <div class="col-md-6 mb-3">
-        <div class="card shadow-lg p-4 mx-auto" style="max-width:500px;border-radius:15px;">
-        <h4 class="mb-3">Estado del Bot</h4>
-        <div class="my-4">${qrCodeData.startsWith('data') ? `<img src="${qrCodeData}" class="img-fluid rounded" style="max-width:250px;">` : `<h2 class="text-success">${qrCodeData}</h2>`}</div>
-        <p>BCV: ${dolarInfo.bcv} | Paralelo: ${dolarInfo.paralelo}</p>
-        <div class="d-grid gap-2">
-        <a href="/cobranza" class="btn btn-primary">PANEL DE COBRANZA</a>
-        <a href="/marketing-panel" class="btn btn-info text-white">PANEL DE MARKETING</a>
-        <a href="/notificador-estado" class="btn btn-secondary text-white">NOTIFICADOR</a>
-        <a href="/historial" class="btn btn-info text-white">HISTORIAL</a>
-        <a href="/recordatorio-estado" class="btn btn-warning text-dark">RECORDATORIOS</a>
-        <a href="/visitas" class="btn btn-success text-white">📅 VISITAS</a>
-        <a href="/recordatorio-visita" class="btn btn-danger text-white">📬 REC. VISITA</a>
-        </div></div></div>
-        <!-- Zone scheduling -->
-        <div class="col-md-6 mb-3">
-        <div class="card shadow-lg p-4" style="max-width:500px;border-radius:15px;">
-        <h4>🗺️ Gestión de Zonas</h4>
-        <p class="text-muted small">Agenda visitas para todos los clientes de una zona.</p>
-        <div class="mb-2">
-            <label class="form-label small fw-bold">Zona</label>
-            <select id="zonaSel" class="form-select form-select-sm">${zonaOptsMain}</select>
-        </div>
-        <div class="mb-2">
-            <label class="form-label small fw-bold">Fecha de visita</label>
-            <input type="date" id="fechaSel" class="form-control form-control-sm">
-        </div>
-        <div class="mb-2">
-            <label class="form-label small fw-bold">Frecuencia (días, 0 = única vez)</label>
-            <input type="number" id="frecSel" class="form-control form-control-sm" value="0" min="0">
-        </div>
-        <button onclick="agendarZona()" class="btn btn-success w-100">📅 Agendar Zona Completa</button>
-        <div id="statusZona" class="mt-2 small fw-bold"></div>
-        </div></div>
-        </div></div>
-        <script>
-        async function agendarZona(){
-            const zona=document.getElementById('zonaSel').value;
-            const fecha=document.getElementById('fechaSel').value;
-            const frecuencia=document.getElementById('frecSel').value;
-            if(!zona||!fecha)return alert("Selecciona zona y fecha.");
-            if(!confirm("Agendar visitas para toda la zona "+zona+" el "+fecha+"?"))return;
-            const st=document.getElementById('statusZona');st.className="mt-2 small fw-bold text-primary";st.innerHTML="⏳ Agendando...";
-            try{
-                const r=await fetch('/agendar-zona',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({zona,fecha,frecuencia})});
-                const t=await r.text();alert(t);st.innerHTML="✅ "+t;
-            }catch(e){st.innerHTML="❌ "+e.message;}
-        }
-        </script>
-        </body></html>`);
+        const [stats] = await pool.execute("SELECT COUNT(*) as total FROM tab_visitas WHERE visita_realizada='NO'");
+        const pendientes = stats[0]?.total || 0;
+        res.end(`<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<meta http-equiv="refresh" content="30">
+<title>ONE4CARS Admin</title>
+<style>
+body{background:linear-gradient(135deg,#0f0c29,#302b63,#24243e);min-height:100vh;font-family:'Segoe UI',system-ui,sans-serif}
+.card-dash{background:rgba(255,255,255,0.06);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.1);border-radius:20px;color:#fff;transition:transform 0.2s,box-shadow 0.2s}
+.card-dash:hover{transform:translateY(-4px);box-shadow:0 12px 40px rgba(0,0,0,0.4)}
+.card-dash .card-body{padding:1.25rem}
+.card-dash .icon-box{width:48px;height:48px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:1.5rem}
+.card-dash .btn{font-size:0.85rem;font-weight:600;letter-spacing:0.3px;border-radius:12px;padding:0.5rem 1rem}
+.header-gradient{background:rgba(0,0,0,0.3);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid rgba(255,255,255,0.08)}
+.dolar-badge{background:rgba(255,255,255,0.08);border-radius:12px;padding:0.35rem 0.85rem;font-size:0.8rem}
+.qr-container img{border-radius:16px;background:#fff;padding:8px}
+.stat-box{background:rgba(255,255,255,0.06);border-radius:14px;padding:0.75rem;text-align:center}
+.stat-box .num{font-size:1.5rem;font-weight:700}
+@media(max-width:576px){
+.card-dash .card-body{padding:1rem}
+.card-dash .btn{font-size:0.8rem;padding:0.4rem 0.75rem}
+.stat-box .num{font-size:1.2rem}
+.dolar-badge{font-size:0.7rem}
+}
+</style>
+</head>
+<body>
+<nav class="navbar navbar-dark header-gradient mb-4">
+<div class="container">
+<a class="navbar-brand fw-bold" href="/" style="font-size:1.1rem;letter-spacing:-0.3px">
+<i class="bi bi-speedometer2 me-2"></i>ONE4CARS
+</a>
+<div class="d-flex align-items-center gap-2">
+<span class="dolar-badge text-white-50"><i class="bi bi-currency-dollar"></i> BCV ${dolarInfo.bcv}</span>
+<span class="dolar-badge text-white-50"><i class="bi bi-currency-exchange"></i> $ ${dolarInfo.paralelo}</span>
+<span class="badge ${qrCodeData === 'ONLINE ✅' ? 'bg-success' : 'bg-danger'}" style="border-radius:20px;font-size:0.7rem">
+${qrCodeData === 'ONLINE ✅' ? '🟢 Online' : '🔴 Offline'}
+</span>
+</div>
+</div>
+</nav>
+<div class="container pb-4">
+${qrCodeData.startsWith('data') ? `
+<div class="row mb-4 justify-content-center">
+<div class="col-12 col-sm-6 col-md-4">
+<div class="card-dash p-4 text-center">
+<h6 class="text-white-50 mb-3"><i class="bi bi-qr-code me-2"></i>Escanee el QR</h6>
+<div class="qr-container">${qrCodeData.startsWith('data') ? `<img src="${qrCodeData}" class="img-fluid" style="max-width:220px">` : ''}</div>
+<p class="text-white-50 small mt-2">Conecte su WhatsApp para usar el bot</p>
+<a href="/reset-sesion" class="btn btn-outline-light btn-sm mt-2" onclick="return confirm('¿Borrar sesión y generar nuevo QR?')"><i class="bi bi-arrow-repeat me-1"></i>Nuevo QR</a>
+</div>
+</div>
+</div>
+` : ''}
+<div class="row g-3">
+<div class="col-6 col-sm-4 col-md-3">
+<a href="/cobranza" class="text-decoration-none">
+<div class="card-dash h-100">
+<div class="card-body">
+<div class="d-flex align-items-center gap-3 mb-2">
+<div class="icon-box" style="background:rgba(13,110,253,0.2);color:#6ea8fe"><i class="bi bi-cash-stack"></i></div>
+<small class="text-white-50 text-uppercase" style="font-size:0.65rem;letter-spacing:0.5px">Cobranza</small>
+</div>
+<span class="fw-bold" style="font-size:0.95rem">Panel de Cobros</span>
+</div>
+</div>
+</a>
+</div>
+<div class="col-6 col-sm-4 col-md-3">
+<a href="/recordatorio-estado" class="text-decoration-none">
+<div class="card-dash h-100">
+<div class="card-body">
+<div class="d-flex align-items-center gap-3 mb-2">
+<div class="icon-box" style="background:rgba(255,193,7,0.2);color:#ffda6a"><i class="bi bi-bell-fill"></i></div>
+<small class="text-white-50 text-uppercase" style="font-size:0.65rem;letter-spacing:0.5px">Recordatorios</small>
+</div>
+<span class="fw-bold" style="font-size:0.95rem">Deudas vencidas</span>
+</div>
+</div>
+</a>
+</div>
+<div class="col-6 col-sm-4 col-md-3">
+<a href="/recordatorio-visita" class="text-decoration-none">
+<div class="card-dash h-100">
+<div class="card-body">
+<div class="d-flex align-items-center gap-3 mb-2">
+<div class="icon-box" style="background:rgba(220,53,69,0.2);color:#ea868f"><i class="bi bi-envelope-paper-fill"></i></div>
+<small class="text-white-50 text-uppercase" style="font-size:0.65rem;letter-spacing:0.5px">Rec. Visita</small>
+</div>
+<span class="fw-bold" style="font-size:0.95rem">Recordatorio visita</span>
+</div>
+</div>
+</a>
+</div>
+<div class="col-6 col-sm-4 col-md-3">
+<a href="/visitas" class="text-decoration-none">
+<div class="card-dash h-100">
+<div class="card-body">
+<div class="d-flex align-items-center gap-3 mb-2">
+<div class="icon-box" style="background:rgba(25,135,84,0.2);color:#75b798"><i class="bi bi-calendar-check-fill"></i></div>
+<small class="text-white-50 text-uppercase" style="font-size:0.65rem;letter-spacing:0.5px">Visitas</small>
+</div>
+<span class="fw-bold" style="font-size:0.95rem">Agenda (${pendientes} pend.)</span>
+</div>
+</div>
+</a>
+</div>
+<div class="col-6 col-sm-4 col-md-3">
+<a href="/notificador-estado" class="text-decoration-none">
+<div class="card-dash h-100">
+<div class="card-body">
+<div class="d-flex align-items-center gap-3 mb-2">
+<div class="icon-box" style="background:rgba(108,117,125,0.2);color:#b0b5ba"><i class="bi bi-megaphone-fill"></i></div>
+<small class="text-white-50 text-uppercase" style="font-size:0.65rem;letter-spacing:0.5px">Notificador</small>
+</div>
+<span class="fw-bold" style="font-size:0.95rem">Envíos automáticos</span>
+</div>
+</div>
+</a>
+</div>
+<div class="col-6 col-sm-4 col-md-3">
+<a href="/marketing-panel" class="text-decoration-none">
+<div class="card-dash h-100">
+<div class="card-body">
+<div class="d-flex align-items-center gap-3 mb-2">
+<div class="icon-box" style="background:rgba(13,202,240,0.2);color:#6edff6"><i class="bi bi-megaphone"></i></div>
+<small class="text-white-50 text-uppercase" style="font-size:0.65rem;letter-spacing:0.5px">Marketing</small>
+</div>
+<span class="fw-bold" style="font-size:0.95rem">Campañas masivas</span>
+</div>
+</div>
+</a>
+</div>
+<div class="col-6 col-sm-4 col-md-3">
+<a href="/historial" class="text-decoration-none">
+<div class="card-dash h-100">
+<div class="card-body">
+<div class="d-flex align-items-center gap-3 mb-2">
+<div class="icon-box" style="background:rgba(111,66,193,0.2);color:#b78ee8"><i class="bi bi-chat-dots-fill"></i></div>
+<small class="text-white-50 text-uppercase" style="font-size:0.65rem;letter-spacing:0.5px">Historial</small>
+</div>
+<span class="fw-bold" style="font-size:0.95rem">Chats</span>
+</div>
+</div>
+</a>
+</div>
+<div class="col-6 col-sm-4 col-md-3">
+<a href="/reset-sesion" class="text-decoration-none" onclick="return confirm('¿Borrar sesión del bot?')">
+<div class="card-dash h-100">
+<div class="card-body">
+<div class="d-flex align-items-center gap-3 mb-2">
+<div class="icon-box" style="background:rgba(255,255,255,0.08);color:#fff"><i class="bi bi-arrow-repeat"></i></div>
+<small class="text-white-50 text-uppercase" style="font-size:0.65rem;letter-spacing:0.5px">Reset</small>
+</div>
+<span class="fw-bold" style="font-size:0.95rem">Nuevo QR</span>
+</div>
+</div>
+</a>
+</div>
+</div>
+<div class="row mt-4">
+<div class="col-12">
+<div class="card-dash">
+<div class="card-body">
+<div class="row g-2 align-items-end">
+<div class="col-12 col-sm-6 col-md-3">
+<label class="text-white-50 small fw-bold mb-1"><i class="bi bi-geo-alt me-1"></i>Zona</label>
+<select id="zonaSel" class="form-select form-select-sm" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);color:#fff;border-radius:10px">${zonaOptsMain}</select>
+</div>
+<div class="col-6 col-sm-4 col-md-2">
+<label class="text-white-50 small fw-bold mb-1"><i class="bi bi-calendar me-1"></i>Fecha</label>
+<input type="date" id="fechaSel" class="form-control form-control-sm" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);color:#fff;border-radius:10px">
+</div>
+<div class="col-6 col-sm-2 col-md-2">
+<label class="text-white-50 small fw-bold mb-1"><i class="bi bi-arrow-repeat me-1"></i>Días</label>
+<input type="number" id="frecSel" class="form-control form-control-sm" value="0" min="0" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);color:#fff;border-radius:10px">
+</div>
+<div class="col-12 col-sm-4 col-md-3">
+<button onclick="agendarZona()" class="btn btn-success w-100" style="border-radius:10px;font-weight:600"><i class="bi bi-calendar-plus me-1"></i>Agendar Zona</button>
+</div>
+<div class="col-12"><div id="statusZona" class="small fw-bold mt-1"></div></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<script>
+async function agendarZona(){
+    const zona=document.getElementById('zonaSel').value;
+    const fecha=document.getElementById('fechaSel').value;
+    const frecuencia=document.getElementById('frecSel').value;
+    if(!zona||!fecha)return alert("Selecciona zona y fecha.");
+    if(!confirm("Agendar visitas para toda la zona "+zona+" el "+fecha+"?"))return;
+    const st=document.getElementById('statusZona');st.className="small fw-bold text-info";st.innerHTML="⏳ Agendando...";
+    try{
+        const r=await fetch('/agendar-zona',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({zona,fecha,frecuencia})});
+        const t=await r.text();alert(t);st.innerHTML="✅ "+t;
+    }catch(e){st.innerHTML="❌ "+e.message;}
+}
+document.querySelectorAll('#frecSel, #zonaSel, #fechaSel').forEach(el => {
+    el.addEventListener('keydown', e => { if(e.key==='Enter') agendarZona(); });
+});
+</script>
+</body>
+</html>`);
     }
 });
 
