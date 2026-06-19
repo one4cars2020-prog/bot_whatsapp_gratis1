@@ -177,9 +177,68 @@ function formatWhatsApp(jid) {
 
 const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 const randomDelay = async () => {
-    const ms = Math.floor(Math.random() * (25000 - 15000 + 1)) + 15000; 
+    const ms = Math.floor(Math.random() * (25000 - 15000 + 1)) + 15000;
     await sleep(ms);
 };
+const humanDelay = async (minSec = 20, maxSec = 50) => {
+    const ms = Math.floor(Math.random() * ((maxSec - minSec) * 1000 + 1)) + minSec * 1000;
+    await sleep(ms);
+};
+const randomBatchPause = async (baseMinutes = 12) => {
+    const extra = Math.floor(Math.random() * 6); // 0-5 extra minutes
+    const ms = (baseMinutes + extra) * 60 * 1000;
+    await sleep(ms);
+};
+const MESSAGE_TEMPLATES = {
+    visita: [
+        (n) => `👋 Hola *${n}*, soy asesor de ONE4CARS. Queremos coordinar una visita para conocer sus necesidades y ofrecerle nuestros productos. ¿Qué día le queda cómodo?`,
+        (n) => `📅 *${n}*, tenemos novedades en ONE4CARS. ¿Podemos agendar una visita esta semana para mostrarle nuestras ofertas?`,
+        (n) => `🚗 Hola *${n}*, desde ONE4CARS queremos hacerle una visita de cortesía para ver cómo podemos seguir sirviéndole. ¿Podemos pasar esta semana?`,
+        (n) => `🛞 *${n}*, le saluda su asesor ONE4CARS. Queremos visitarlo para presentarle nuestros nuevos productos y precios. ¿Cuándo podría recibirnos?`,
+        (n) => `⭐ Hola *${n}*, soy su enlace ONE4CARS. Nos gustaría pasar por su negocio para una visita de seguimiento y atención. ¿Qué día le parece bien?`,
+        (n) => `🔧 *${n}*, reciba un cordial saludo de ONE4CARS. Queremos agendar una visita para conocer sus requerimientos y ofrecerle lo mejor. ¿Estaría disponible esta semana?`,
+        (n) => `📞 *${n}*, buenos días. Le habla su asesor ONE4CARS. Quisiéramos coordinar un día para visitarlo y conversar sobre cómo podemos ayudarle a crecer. ¿Cuándo sería ideal para usted?`,
+        (n) => `🎯 *${n}*, en ONE4CARS queremos ofrecerle una atención más cercana. ¿Podemos agendar una visita esta semana para conocer sus necesidades y mostrarle nuestras soluciones?`,
+        (n) => `🤝 Hola *${n}*, soy de ONE4CARS. Valoramos su confianza y queremos visitarlo personalmente para seguir fortaleciendo nuestra relación comercial. ¿Qué día le funciona?`,
+        (n) => `📋 *${n}*, le escribe su asesor ONE4CARS. Queremos pasar por su establecimiento para conocer sus requerimientos actuales y ofrecerle lo mejor de nuestro catálogo. ¿Podemos coordinar una visita?`
+    ],
+    cobranza60: [
+        (n, f, divisas, dias, bcv) => `🧾 *AVISO DE PAGO PENDIENTE*\n\nHola *${n}*, la factura *N° ${f}* emitida presenta un saldo de *$${divisas}* que ya superó los ${dias} días de vencida. Le agradecemos realizar el pago a la brevedad para mantener su historial al día.\n\nTotal Divisas: $${divisas}\nTotal Bs: ${bcv}\n\nQuedamos a su disposición. 🚗`,
+        (n, f, divisas, dias, bcv) => `⚠️ *NOTIFICACIÓN DE VENCIMIENTO*\n\nHola *${n}*, le recordamos que la factura *N° ${f}* tiene ${dias} días de vencida con un saldo de *$${divisas}*. Le solicitamos proceder al pago lo antes posible.\n\n💰 Total Divisas: $${divisas}\nTotal Bs: ${bcv}\n\nGracias por su atención. 🚗`,
+        (n, f, divisas, dias, bcv) => `📋 *RECORDATORIO DE PAGO*\n\nEstimado(a) *${n}*, la factura *N° ${f}* se encuentra vencida desde hace ${dias} días con un saldo pendiente de *$${divisas}*. Agradecemos su pronta gestión de pago.\n\nTotal Divisas: $${divisas}\nTotal Bs: ${bcv}\n\nSaludos cordiales. 🚗`,
+        (n, f, divisas, dias, bcv) => `📌 *CUENTA POR COBRAR*\n\nHola *${n}*, le notificamos que la factura *N° ${f}* por *$${divisas}* tiene ${dias} días de vencida. Le solicitamos cancelar a la brevedad para evitar recargos.\n\nTotal Divisas: $${divisas}\nTotal Bs: ${bcv}\n\nAgradecemos su atención. 🚗`,
+        (n, f, divisas, dias, bcv) => `⏰ *VENCIMIENTO DE FACTURA*\n\nEstimado(a) *${n}*, la factura *N° ${f}* por *$${divisas}* acumula ${dias} días de retraso. Le agradecemos ponerse al día con su pago.\n\n💰 Total Divisas: $${divisas}\nTotal Bs: ${bcv}\n\nQuedamos a la espera de su gestión. 🚗`,
+        (n, f, divisas, dias, bcv) => `📢 *PAGO PENDIENTE*\n\nHola *${n}*, le recordamos que la factura *N° ${f}* con saldo de *$${divisas}* está vencida desde hace ${dias} días. Le solicitamos realizar el pago lo antes posible.\n\nTotal Divisas: $${divisas}\nTotal Bs: ${bcv}\n\nGracias por su comprensión. 🚗`,
+        (n, f, divisas, dias, bcv) => `📄 *ESTADO DE CUENTA*\n\nEstimado(a) *${n}*, su factura *N° ${f}* por *$${divisas}* presenta ${dias} días de vencida. Le invitamos a cancelar para mantener su récord comercial al día.\n\n💰 Total Divisas: $${divisas}\nTotal Bs: ${bcv}\n\nSaludos cordiales. 🚗`,
+        (n, f, divisas, dias, bcv) => `🔴 *AVISO IMPORTANTE*\n\nHola *${n}*, la factura *N° ${f}* con saldo de *$${divisas}* tiene ${dias} días de vencida. Le agradecemos gestionar el pago a la brevedad.\n\nTotal Divisas: $${divisas}\nTotal Bs: ${bcv}\n\nQuedamos a su disposición. 🚗`,
+        (n, f, divisas, dias, bcv) => `📬 *NOTIFICACIÓN DE COBRANZA*\n\nEstimado(a) *${n}*, le informamos que la factura *N° ${f}* por *$${divisas}* se encuentra vencida (${dias} días). Le solicitamos proceder al pago.\n\n💰 Total Divisas: $${divisas}\nTotal Bs: ${bcv}\n\nAgradecemos su pronta respuesta. 🚗`,
+        (n, f, divisas, dias, bcv) => `📑 *SALDO PENDIENTE*\n\nHola *${n}*, la factura *N° ${f}* emitida por *$${divisas}* supera los ${dias} días de vencida. Le agradecemos cancelar lo antes posible.\n\nTotal Divisas: $${divisas}\nTotal Bs: ${bcv}\n\nGracias por su gestión. 🚗`
+    ],
+    recordatorioEstado: [
+        (n, nota, divisas, dias, bcv) => `📢 *ONE4CARS — Recordatorio de Pago* 🚗\n\nEstimado(a) *${n}*, le escribimos de manera cordial para recordarle que la nota ${nota} por un Monto de $${divisas} se encuentra vencida desde hace ${dias}. Le solicitamos proceder con el pago a la brevedad para evitar suspensiones en el servicio y mantener su historial comercial al día.\n\n💰 Realice su pago ahora y continúe disfrutando de nuestros productos y atención preferencial.\nTotal Divisas: $${divisas}\nTotal Bs: ${bcv}\n\nAgradecemos su pronta gestión. ¡Gracias por confiar en ONE4CARS! 🚀`,
+        (n, nota, divisas, dias, bcv) => `📢 *ONE4CARS — Aviso de Pago Pendiente* 🚗\n\nHola *${n}*, por medio del presente le recordamos que la nota ${nota} por $${divisas} se encuentra pendiente de pago desde hace ${dias}. Le agradecemos regularizar su situación a la mayor brevedad.\n\n💳 Total Divisas: $${divisas}\nTotal Bs: ${bcv}\n\nQuedamos atentos a su gestión. ¡Gracias por preferirnos! 🚗`,
+        (n, nota, divisas, dias, bcv) => `📢 *ONE4CARS — Notificación de Deuda* 🚗\n\nEstimado(a) *${n}*, le comunicamos cordialmente que la nota ${nota} por $${divisas} acumula ${dias} de vencida. Le solicitamos efectuar el pago para mantener su cuenta al día.\n\n💰 Total Divisas: $${divisas}\nTotal Bs: ${bcv}\n\nA la espera de su pronta respuesta. ¡Saludos! 🚗`,
+        (n, nota, divisas, dias, bcv) => `📢 *ONE4CARS — Cuenta por Cobrar* 🚗\n\nHola *${n}*, le recordamos que la nota ${nota} por $${divisas} tiene ${dias} de vencida. Le agradecemos cancelar a la brevedad para mantener su historial al día.\n\n💰 Total Divisas: $${divisas}\nTotal Bs: ${bcv}\n\nGracias por su atención. 🚗`,
+        (n, nota, divisas, dias, bcv) => `📢 *ONE4CARS — Aviso de Vencimiento* 🚗\n\nEstimado(a) *${n}*, la nota ${nota} por $${divisas} se encuentra vencida (${dias}). Le solicitamos proceder con el pago para evitar suspensiones.\n\n💳 Total Divisas: $${divisas}\nTotal Bs: ${bcv}\n\nAgradecemos su gestión. 🚗`,
+        (n, nota, divisas, dias, bcv) => `📢 *ONE4CARS — Nota Pendiente* 🚗\n\nHola *${n}*, le escribimos para informarle que la nota ${nota} por $${divisas} acumula ${dias} de vencida. Le agradecemos ponerse al día.\n\n💰 Total Divisas: $${divisas}\nTotal Bs: ${bcv}\n\nQuedamos a su disposición. 🚗`,
+        (n, nota, divisas, dias, bcv) => `📢 *ONE4CARS — Estado de Cuenta* 🚗\n\nEstimado(a) *${n}*, su nota ${nota} por $${divisas} está pendiente de pago desde hace ${dias}. Le solicitamos cancelar a la brevedad.\n\n💳 Total Divisas: $${divisas}\nTotal Bs: ${bcv}\n\nGracias por su preferencia. 🚗`,
+        (n, nota, divisas, dias, bcv) => `📢 *ONE4CARS — Deuda Pendiente* 🚗\n\nHola *${n}*, le notificamos que la nota ${nota} por $${divisas} tiene ${dias} de vencida. Le agradecemos regularizar su situación.\n\n💰 Total Divisas: $${divisas}\nTotal Bs: ${bcv}\n\nSaludos cordiales. 🚗`,
+        (n, nota, divisas, dias, bcv) => `📢 *ONE4CARS — Aviso de Cobro* 🚗\n\nEstimado(a) *${n}*, la nota ${nota} por $${divisas} supera los ${dias} de vencida. Le solicitamos efectuar el pago a la brevedad.\n\n💳 Total Divisas: $${divisas}\nTotal Bs: ${bcv}\n\nAgradecemos su atención. 🚗`,
+        (n, nota, divisas, dias, bcv) => `📢 *ONE4CARS — Saldo Vencido* 🚗\n\nHola *${n}*, su nota ${nota} por $${divisas} se encuentra vencida desde hace ${dias}. Le agradecemos proceder con el pago.\n\n💰 Total Divisas: $${divisas}\nTotal Bs: ${bcv}\n\nGracias por confiar en ONE4CARS. 🚗`
+    ]
+};
+const pickTemplate = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const DIAS_ENVIADOS_HOY = new Set();
+const MAX_ENVIOS_POR_DIA = 60;
+function chequearLimiteDiario() {
+    const hoy = new Date().toDateString();
+    if (DIAS_ENVIADOS_HOY.size === 0 || !DIAS_ENVIADOS_HOY.has(hoy)) {
+        DIAS_ENVIADOS_HOY.clear();
+        DIAS_ENVIADOS_HOY.add(hoy);
+        return true;
+    }
+    return true;
+}
 
 async function guardarMensaje(tel, rol, contenido) {
     try {
@@ -188,8 +247,9 @@ async function guardarMensaje(tel, rol, contenido) {
 }
 
 async function setModo(tel, modo) {
-    await pool.execute("INSERT INTO control_chat (telefono, modo) VALUES (?, ?) ON DUPLICATE KEY UPDATE modo = VALUES(modo)", [tel, modo]);
+    await pool.execute("INSERT INTO control_chat (telefono, modo, updated_at) VALUES (?, ?, NOW()) ON DUPLICATE KEY UPDATE modo = VALUES(modo), updated_at = NOW()", [tel, modo]);
 }
+const REACTIVAR_BOT_MS = 2 * 60 * 60 * 1000; // 2 horas sin actividad humana → el bot se reactiva solo
 
 async function setSesionDatos(tel, datos) {
     try {
@@ -741,10 +801,11 @@ function obtenerNivelRecordatorio(dias) {
 
 function obtenerTonoMensaje(nivel, f, monto, fecha, dias) {
     const saldoDivisas = parseFloat(f.total) - parseFloat(f.abono_factura || 0);
+    const bcv = monto;
     if (nivel >= 60) {
-        return `🧾 *AVISO DE PAGO PENDIENTE*\n\nHola *${f.nombres}*, la factura *N° ${f.nro_factura}* emitida el *${fecha}* ya superó los ${dias} días de vencida.\n\n💵 Saldo en divisas: *$${saldoDivisas.toFixed(2)}*\n💰 Equivalente BCV: *Bs. ${monto.toFixed(2)}*\n\nEl retraso en el pago afecta la rotación de nuestros productos y la disponibilidad de inventario para todos nuestros clientes. Le agradecemos realizar el pago a la mayor brevedad posible.\n\nQuedamos a su disposición para cualquier duda o gestión. 🚗`;
+        return pickTemplate(MESSAGE_TEMPLATES.cobranza60)(f.nombres, f.nro_factura, saldoDivisas.toFixed(2), dias, bcv.toFixed(2));
     }
-    return `🧾 *RECORDATORIO DE PAGO*\n\nHola *${f.nombres}*, le recordamos amablemente que la factura *N° ${f.nro_factura}* con fecha *${fecha}* presenta un saldo pendiente de *$${saldoDivisas.toFixed(2)}* en divisas (*Bs. ${monto.toFixed(2)}* a tasa BCV).\n\nLe agradecemos gestionar el pago para mantener su cuenta al día. Estamos a su disposición para cualquier consulta. 🚗`;
+    return `🧾 *RECORDATORIO DE PAGO*\n\nHola *${f.nombres}*, le recordamos amablemente que la factura *N° ${f.nro_factura}* con fecha *${fecha}* presenta un saldo pendiente de *$${saldoDivisas.toFixed(2)}* en divisas (*Bs. ${bcv.toFixed(2)}* a tasa BCV).\n\nLe agradecemos gestionar el pago para mantener su cuenta al día. Estamos a su disposición para cualquier consulta. 🚗`;
 }
 
 async function checkFacturasVencidas() {
@@ -776,7 +837,7 @@ async function checkFacturasVencidas() {
                 }
                 await notificador.marcarRecordatorio(f.id_factura, nivel);
                 cont++;
-                await sleep(1000);
+                await humanDelay(15, 35);
             }
         }
 
@@ -843,7 +904,7 @@ async function checkVendedoresRecordatorio(force = false) {
             if (!v.jid || v.facturas.length === 0) continue;
             const msg = `📢 *RESUMEN DE CLIENTES VENCIDOS*\n\nVendedor: *${v.nombre}*\n\n${v.facturas.join('\n')}\n\nLe recordamos la importancia de gestionar estos cobros para mantener la rotación de productos.`;
             await safeSendMessage(v.jid, { text: msg });
-            await sleep(1500);
+            await humanDelay(15, 30);
         }
 
         if (!force) {
@@ -1113,8 +1174,8 @@ async function checkRecordatorioVisitaSemanal(force = false) {
             const c = clientes[i];
 
             if (i > 0 && i % batchSize === 0) {
-                console.log(`[RECORDATORIO VISITA] Pausa ${pauseBatch/60000}min tras lote ${i}/${clientes.length}...`);
-                await sleep(pauseBatch);
+                console.log(`[RECORDATORIO VISITA] Pausa lote ${i}/${clientes.length}...`);
+                await randomBatchPause();
             }
 
             const [yaEnviado] = await pool.execute(
@@ -1128,24 +1189,9 @@ async function checkRecordatorioVisitaSemanal(force = false) {
 
             const vendedorNombre = c.vendedor_nombre || 'tu vendedor asignado';
 
-            const mensaje = `🛠️ *ONE4CARS —Recordatorio Especial* 🚗💰
-
-Hola *${c.nombres}*, esperamos que te encuentres bien.
-
-Sabemos que tu negocio es importante y por eso queremos recordarte que nuestros *productos están diseñados para optimizar tu taller o comercio*, ofreciendo soluciones reales a los retos del día a día: repuestos de calidad, disponibilidad inmediata y precios justos pagaderos en divisas.
-
-En *ONE4CARS* creemos en la *atención esmerada y personalizada*. Por eso cuentas con un equipo humano comprometido en brindarte el mejor servicio, desde la asesoría técnica hasta la entrega de tus pedidos.
-
-🤝 *Nuestra solidaridad comercial*
-Entendemos los momentos difíciles y estamos dispuestos a conversar contigo para llegar a acuerdos que beneficien a ambas partes. Queremos que sigas creciendo y que nosotros seamos parte de ese crecimiento.
-
-👤 *Tu vendedor asignado:* ${vendedorNombre}
-📞 Contáctalo directamente para recibir atención personalizada.
-
-📅 *¿Quieres que un representante te visite?*
-Estaremos encantados de coordinar una visita para conocer tus necesidades en detalle y ofrecerte soluciones a la medida. ¡Solo confírmalo respondiendo a este mensaje!
-
-*ONE4CARS — Contigo, siempre avanzando.* 🚀`;
+            const tplVisita = pickTemplate(MESSAGE_TEMPLATES.visita);
+            const introPersonal = tplVisita(c.nombres);
+            const mensaje = `${introPersonal}\n\nEn *ONE4CARS* creemos en la *atención esmerada y personalizada*. Por eso cuentas con un equipo humano comprometido en brindarte el mejor servicio, desde la asesoría técnica hasta la entrega de tus pedidos.\n\n🤝 *Nuestra solidaridad comercial*\nEntendemos los momentos difíciles y estamos dispuestos a conversar contigo para llegar a acuerdos que beneficien a ambas partes. Queremos que sigas creciendo y que nosotros seamos parte de ese crecimiento.\n\n👤 *Tu vendedor asignado:* ${vendedorNombre}\n📞 Contáctalo directamente para recibir atención personalizada.\n\n📅 *¿Quieres que un representante te visite?*\nEstaremos encantados de coordinar una visita para conocer tus necesidades en detalle y ofrecerte soluciones a la medida. ¡Solo confírmalo respondiendo a este mensaje!\n\n*ONE4CARS — Contigo, siempre avanzando.* 🚀`;
 
             try {
                 await socketBot.sendMessage(jid, {
@@ -1212,8 +1258,8 @@ async function checkRecordatorioVisitaSemanalPorIds(ids) {
         const id = ids[i];
 
         if (i > 0 && i % batchSize === 0) {
-            console.log(`[RECORDATORIO VISITA] Pausa ${pauseBatch/60000}min tras lote ${i}/${ids.length} manual...`);
-            await sleep(pauseBatch);
+            console.log(`[RECORDATORIO VISITA] Pausa tras lote ${i}/${ids.length} manual...`);
+            await randomBatchPause();
         }
 
         const [clientes] = await pool.execute(`
@@ -1230,7 +1276,9 @@ async function checkRecordatorioVisitaSemanalPorIds(ids) {
         if (!jid) continue;
 
         const vendedorNombre = c.vendedor_nombre || 'tu vendedor asignado';
-        const mensaje = `🛠️ *ONE4CARS —Recordatorio Especial* 🚗💰\n\nHola *${c.nombres}*, esperamos que te encuentres bien.\n\nSabemos que tu negocio es importante y por eso queremos recordarte que nuestros *productos están diseñados para optimizar tu taller o comercio*, ofreciendo soluciones reales a los retos del día a día: repuestos de calidad, disponibilidad inmediata y precios justos pagaderos en divisas.\n\nEn *ONE4CARS* creemos en la *atención esmerada y personalizada*. Por eso cuentas con un equipo humano comprometido en brindarte el mejor servicio, desde la asesoría técnica hasta la entrega de tus pedidos.\n\n🤝 *Nuestra solidaridad comercial*\nEntendemos los momentos difíciles y estamos dispuestos a conversar contigo para llegar a acuerdos que beneficien a ambas partes. Queremos que sigas creciendo y que nosotros seamos parte de ese crecimiento.\n\n👤 *Tu vendedor asignado:* ${vendedorNombre}\n📞 Contáctalo directamente para recibir atención personalizada.\n\n📅 *¿Quieres que un representante te visite?*\nEstaremos encantados de coordinar una visita para conocer tus necesidades en detalle y ofrecerte soluciones a la medida. ¡Solo confírmalo respondiendo a este mensaje!\n\n*ONE4CARS — Contigo, siempre avanzando.* 🚀`;
+        const tplVisita = pickTemplate(MESSAGE_TEMPLATES.visita);
+        const introPersonal = tplVisita(c.nombres);
+        const mensaje = `${introPersonal}\n\nEn *ONE4CARS* creemos en la *atención esmerada y personalizada*. Por eso cuentas con un equipo humano comprometido en brindarte el mejor servicio, desde la asesoría técnica hasta la entrega de tus pedidos.\n\n🤝 *Nuestra solidaridad comercial*\nEntendemos los momentos difíciles y estamos dispuestos a conversar contigo para llegar a acuerdos que beneficien a ambas partes. Queremos que sigas creciendo y que nosotros seamos parte de ese crecimiento.\n\n👤 *Tu vendedor asignado:* ${vendedorNombre}\n📞 Contáctalo directamente para recibir atención personalizada.\n\n📅 *¿Quieres que un representante te visite?*\nEstaremos encantados de coordinar una visita para conocer tus necesidades en detalle y ofrecerte soluciones a la medida. ¡Solo confírmalo respondiendo a este mensaje!\n\n*ONE4CARS — Contigo, siempre avanzando.* 🚀`;
 
         try {
             await socketBot.sendMessage(jid, {
@@ -1253,7 +1301,7 @@ async function checkRecordatorioVisitaSemanalPorIds(ids) {
             );
             await pool.execute("INSERT INTO recordatorio_visita_log (id_cliente, semana_inicio) VALUES (?, ?)", [c.id_cliente, semanaInicio]);
             cont++;
-            await sleep(sendConfig.pauseSend);
+            await humanDelay(20, 45);
         } catch (e) {
             console.log(`[RECORDATORIO VISITA] Error DB con ${c.nombres}:`, e.message);
         }
@@ -1348,7 +1396,14 @@ async function startBot() {
 
             await guardarMensaje(from, 'user', rawText);
             const sesion = await getSesion(from);
-            if (sesion && sesion.modo === 'humano' && !isAdmin) return;
+            if (sesion && sesion.modo === 'humano' && !isAdmin) {
+                if (sesion.updated_at && (Date.now() - new Date(sesion.updated_at).getTime()) > REACTIVAR_BOT_MS) {
+                    await setModo(from, 'bot');
+                    console.log(`[AUTO-REACT] ${from.split('@')[0]} reactivado tras ${REACTIVAR_BOT_MS/3600000}h sin actividad humana.`);
+                } else {
+                    return;
+                }
+            }
 
             // --- 1. LÓGICA DE RIF (ADMINISTRADORES) ---
             if (esRIFPuro) {
@@ -1916,9 +1971,10 @@ const server = http.createServer(async (req, res) => {
                     const divisas = parseFloat(f.total) - parseFloat(f.abono_factura || 0);
                     const bcv = divisas / (parseFloat(f.porcentaje) || 1);
                     const dias = Math.floor((new Date() - new Date(f.fecha_reg)) / 86400000);
-                    const msg = `📢 *ONE4CARS — Recordatorio de Pago* 🚗\n\nEstimado(a) *${f.nombres}*, le escribimos de manera cordial para recordarle que la nota #${f.nro_factura} por un Monto de $${divisas.toFixed(2)} se encuentra vencida desde hace ${dias} días. Le solicitamos proceder con el pago a la brevedad para evitar suspensiones en el servicio y mantener su historial comercial al día.\n\n💰 Realice su pago ahora y continúe disfrutando de nuestros productos y atención preferencial.\n                        Total Divisas: $${divisas.toFixed(2)}\nTotal $ CALCULADOS a BCV del dia: ${bcv.toFixed(2)}\n\nAgradecemos su pronta gestión. ¡Gracias por confiar en ONE4CARS! 🚀`;
+                    const tpl = pickTemplate(MESSAGE_TEMPLATES.cobranza60);
+                    const msg = tpl(f.nombres, f.nro_factura, divisas.toFixed(2), dias, bcv.toFixed(2));
                     await safeSendMessage(jid, { text: msg });
-                    await randomDelay();
+                    await humanDelay(25, 55);
                 }
             }
             res.end("OK");
@@ -2263,11 +2319,11 @@ const server = http.createServer(async (req, res) => {
         }
         const meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 
-        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Visitas Agendadas</title><style>body{background:#f4f7f6}.card-custom{border-radius:12px;border:none;box-shadow:0 2px 8px rgba(0,0,0,0.06)}</style></head><body class="bg-light">${header}
+        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Visitas Agendadas</title><style>body{background:#f4f7f6}.card-custom{border-radius:12px;border:none;box-shadow:0 2px 8px rgba(0,0,0,0.06)}@media print{body{background:#fff}.no-print,.no-print-table{display:none!important}.card-custom{box-shadow:none;border:1px solid #ddd}table{font-size:11px}td:first-child,th:first-child{display:none}}</style></head><body class="bg-light">${header}
         <div class="container-fluid px-4 mt-3">
         <h3>📅 Agenda de Visitas</h3>
 
-        <div class="row g-3 mb-3">
+        <div class="row g-3 mb-3 no-print">
         <!-- Filters -->
         <div class="col-md-8">
         <div class="card card-custom p-3">
@@ -2291,13 +2347,14 @@ const server = http.createServer(async (req, res) => {
             <div class="col-2 d-flex gap-1">
                 <button type="submit" class="btn btn-sm btn-primary">Filtrar</button>
                 <a href="/visitas" class="btn btn-sm btn-outline-secondary">X</a>
+                <button onclick="window.print()" class="btn btn-sm btn-info text-white">🖨️</button>
             </div>
         </form>
         </div>
         </div>
 
         <!-- Move visits -->
-        <div class="col-md-4">
+        <div class="col-md-4 no-print">
         <div class="card card-custom p-3">
         <div class="row g-2 align-items-end">
             <div class="col-5">
@@ -2317,7 +2374,7 @@ const server = http.createServer(async (req, res) => {
         </div>
 
         <!-- Calendar -->
-        <div class="card card-custom p-3 mb-3">
+        <div class="card card-custom p-3 mb-3 no-print">
         <h5>🗓️ ${meses[mesCal]} ${anioCal}</h5>
         <table class="table table-sm table-borderless mb-0 text-center">
         <thead><tr>${diasSemana.map(d => `<th class="small text-muted">${d}</th>`).join('')}</tr></thead>
@@ -2325,7 +2382,7 @@ const server = http.createServer(async (req, res) => {
         </table></div>
 
         <div class="card card-custom p-3">
-        <div class="d-flex justify-content-between align-items-center mb-2">
+        <div class="d-flex justify-content-between align-items-center mb-2 no-print">
             <h5>Visitas (${visitas.length})</h5>
             <div><input class="form-check-input" type="checkbox" id="checkAllVis" onchange="document.querySelectorAll('.visita-check').forEach(c=>c.checked=this.checked)"> <label class="form-check-label small">Sel. Todos</label></div>
         </div>
@@ -2334,7 +2391,7 @@ const server = http.createServer(async (req, res) => {
         <thead class="table-light"><tr><th style="width:36px">Sel</th><th>ID</th><th>Fecha Reg.</th><th>Cliente</th><th>Celular</th><th>Vendedor</th><th>Zona</th><th>Acuerdo</th><th>Motivo</th><th>¿Hecha?</th></tr></thead>
         <tbody>${rows || '<tr><td colspan="10" class="text-center text-muted">Sin visitas</td></tr>'}</tbody>
         </table></div></div>
-        <a href="/" class="btn btn-outline-secondary mt-2">⬅ Volver</a>
+        <a href="/" class="btn btn-outline-secondary mt-2 no-print">⬅ Volver</a>
         </div>
         <script>
         function reprogramar(id, nombre){
@@ -2398,10 +2455,11 @@ const server = http.createServer(async (req, res) => {
                         const bcv = (divisas && f) ? (divisas / (parseFloat(f.porcentaje) || 1)) : 0;
                         const jid = formatWhatsApp(c.celular);
                         if (!jid) continue;
-                        const msg = `📢 *ONE4CARS — Recordatorio de Pago* 🚗\n\nEstimado(a) *${c.nombres}*, le escribimos de manera cordial para recordarle que la nota ${notaStr} por un Monto de $${divisas.toFixed(2)} se encuentra vencida desde hace ${diasStr}. Le solicitamos proceder con el pago a la brevedad para evitar suspensiones en el servicio y mantener su historial comercial al día.\n\n💰 Realice su pago ahora y continúe disfrutando de nuestros productos y atención preferencial.\nTotal Divisas: $${divisas.toFixed(2)}\nTotal $ calculados a BCV del dia: ${bcv.toFixed(2)}\n\nAgradecemos su pronta gestión. ¡Gracias por confiar en ONE4CARS! 🚀`;
+                        const tpl = pickTemplate(MESSAGE_TEMPLATES.recordatorioEstado);
+                        const msg = tpl(c.nombres, notaStr, divisas.toFixed(2), diasStr, bcv.toFixed(2));
                         await safeSendMessage(jid, { text: msg });
                         cont++;
-                        await sleep(sendConfig.pauseSend);
+                        await humanDelay(25, 50);
                     }
                     console.log(`[RECORDATORIO ESTADO] ${cont}/${ids.length} enviado(s).`);
                 }, 500);
@@ -2428,10 +2486,11 @@ const server = http.createServer(async (req, res) => {
                     const bcv = (divisas && f) ? (divisas / (parseFloat(f.porcentaje) || 1)) : 0;
                     const jid = formatWhatsApp(c.celular);
                     if (!jid) continue;
-                    const msg = `📢 *ONE4CARS — Recordatorio de Pago* 🚗\n\nEstimado(a) *${c.nombres}*, le escribimos de manera cordial para recordarle que la nota ${notaStr} por un Monto de $${divisas.toFixed(2)} se encuentra vencida desde hace ${diasStr}. Le solicitamos proceder con el pago a la brevedad para evitar suspensiones en el servicio y mantener su historial comercial al día.\n\n💰 Realice su pago ahora y continúe disfrutando de nuestros productos y atención preferencial.\nTotal Divisas: $${divisas.toFixed(2)}\nTotal % Calculados a BCV del dia: ${bcv.toFixed(2)}\n\nAgradecemos su pronta gestión. ¡Gracias por confiar en ONE4CARS! 🚀`;
+                    const tpl = pickTemplate(MESSAGE_TEMPLATES.recordatorioEstado);
+                    const msg = tpl(c.nombres, notaStr, divisas.toFixed(2), diasStr, bcv.toFixed(2));
                     await safeSendMessage(jid, { text: msg });
                     cont++;
-                    await sleep(sendConfig.pauseSend);
+                    await humanDelay(25, 50);
                 }
                 console.log(`[RECORDATORIO ESTADO] Forzado: ${cont} enviado(s).`);
             }, 500);
