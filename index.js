@@ -39,6 +39,20 @@ const pool = mysql.createPool({
     connectionLimit: 10,
     queueLimit: 0
 });
+const poolLocal = mysql.createPool({
+    host: 'localhost',
+    user: 'root',
+    password: '',
+    database: 'venezon',
+    waitForConnections: true,
+    connectionLimit: 5,
+    queueLimit: 0
+});
+const dualExecute = async (sql, params) => {
+    const r = await pool.execute(sql, params);
+    try { await poolLocal.execute(sql, params); } catch (e) { console.log("[DUAL] Local error:", e.message); }
+    return r;
+};
 
 const PDF_URL_CATALOGO = "https://www.one4cars.com/sevencorpweb/uploads/precios/Catalogo%20-%20ONE4CARS_compressed.pdf";
 
@@ -2256,30 +2270,35 @@ const server = http.createServer(async (req, res) => {
         const filtroFechaDesde = parsedUrl.searchParams.get('fecha_desde') || '';
         const filtroFechaHasta = parsedUrl.searchParams.get('fecha_hasta') || '';
         const filtroDia = parsedUrl.searchParams.get('dia') || '';
-        let where = [];
+        let where = ["a.estado IN ('pendiente','no_contesto','ausente','pospuso') OR a.estado IS NULL"];
         let params = [];
-        if (filtroZona) { where.push("zona = ?"); params.push(filtroZona); }
-        if (filtroDia) { where.push("acuerdo_visita = ?"); params.push(filtroDia); }
-        if (filtroFechaDesde) { where.push("acuerdo_visita >= ?"); params.push(filtroFechaDesde); }
-        if (filtroFechaHasta) { where.push("acuerdo_visita <= ?"); params.push(filtroFechaHasta); }
-        const whereClause = where.length ? "WHERE " + where.join(" AND ") : "";
-        const [zonas] = await pool.execute("SELECT DISTINCT zona FROM tab_visitas WHERE zona != '' ORDER BY zona");
-        const [visitas] = await pool.execute("SELECT * FROM tab_visitas " + whereClause + " ORDER BY acuerdo_visita DESC LIMIT 200", params);
-        const rows = visitas.map(v => `<tr>
-            <td><input type="checkbox" class="visita-check" value="${v.id_visita}"></td>
-            <td>${v.id_visita}</td>
-            <td>${v.fecha_reg || ''}</td>
-            <td><a href="#" onclick="return reprogramar(${v.id_visita},'${v.nombres || ''}')" title="Reprogramar">${v.nombres || ''}</a></td>
+        if (filtroZona) { where.push("c.zona = ?"); params.push(filtroZona); }
+        if (filtroDia) { where.push("a.fecha = ?"); params.push(filtroDia); }
+        if (filtroFechaDesde) { where.push("a.fecha >= ?"); params.push(filtroFechaDesde); }
+        if (filtroFechaHasta) { where.push("a.fecha <= ?"); params.push(filtroFechaHasta); }
+        const whereClause = "WHERE (" + where.join(") AND (") + ")";
+        const [zonas] = await pool.execute("SELECT DISTINCT c.zona FROM tab_agenda_visitas a JOIN tab_clientes c ON a.id_cliente = c.id_cliente WHERE c.zona != '' ORDER BY c.zona");
+        const [visitas] = await pool.execute("SELECT a.id_agenda, a.id_cliente, a.fecha, a.hora, a.estado, a.frecuencia_dias, a.observacion, c.nombres, c.celular, c.zona, c.vendedor FROM tab_agenda_visitas a JOIN tab_clientes c ON a.id_cliente = c.id_cliente " + whereClause + " ORDER BY a.fecha ASC, a.hora ASC LIMIT 200", params);
+        const estadoBadge = { pendiente:'bg-warning text-dark', cumplida:'bg-success', pago:'bg-success', cerrado:'bg-secondary', no_contesto:'bg-warning text-dark', ausente:'bg-warning text-dark', pospuso:'bg-warning text-dark' };
+        const estadoLabel = { pendiente:'Pendiente', cumplida:'Cumplida', pago:'Pagó', cerrado:'Cerrado', no_contesto:'No Contestó', ausente:'Ausente', pospuso:'Pospuso' };
+        const rows = visitas.map(v => {
+            const eb = estadoBadge[v.estado] || 'bg-warning text-dark';
+            const el = estadoLabel[v.estado] || 'Pendiente';
+            return `<tr>
+            <td><input type="checkbox" class="visita-check" value="${v.id_agenda}"></td>
+            <td>${v.id_agenda}</td>
+            <td>${v.fecha || ''}</td>
+            <td><a href="?vista=cliente&id_cliente=${v.id_cliente}" target="_blank">${v.nombres || ''}</a></td>
             <td>${v.celular || ''}</td>
-            <td>${v.nombre || ''}</td>
+            <td>${v.vendedor || ''}</td>
             <td>${v.zona || ''}</td>
-            <td><span id="fecha-${v.id_visita}">${v.acuerdo_visita || ''}</span>
-                <input type="date" id="nueva-fecha-${v.id_visita}" style="display:none" class="form-control form-control-sm d-inline" style="width:auto">
-                <button id="btn-repro-${v.id_visita}" style="display:none" class="btn btn-sm btn-success" onclick="guardarRepro(${v.id_visita})">✔</button>
+            <td><span id="fecha-${v.id_agenda}">${v.fecha || ''}</span>
+                <input type="date" id="nueva-fecha-${v.id_agenda}" style="display:none" class="form-control form-control-sm d-inline" style="width:auto">
+                <button id="btn-repro-${v.id_agenda}" style="display:none" class="btn btn-sm btn-success" onclick="guardarRepro(${v.id_agenda})">✔</button>
             </td>
-            <td>${v.motivo ? v.motivo.substring(0, 40) : ''}</td>
-            <td>${v.visita_realizada}</td>
-        </tr>`).join('');
+            <td>${v.observacion ? v.observacion.substring(0, 40) : ''}</td>
+            <td><span class="badge ${eb}">${el}</span></td>
+        </tr>`}).join('');
         const zonaOptions = zonas.map(z => `<option value="${z.zona}"${filtroZona === z.zona ? ' selected' : ''}>${z.zona}</option>`).join('');
 
         // Calendar
@@ -2290,9 +2309,9 @@ const server = http.createServer(async (req, res) => {
         const ultimoDia = new Date(anioCal, mesCal + 1, 0);
         const inicioMes = primerDia.toISOString().split('T')[0];
         const finMes = ultimoDia.toISOString().split('T')[0];
-        const [visitasPorDia] = await pool.execute("SELECT acuerdo_visita, COUNT(*) as total FROM tab_visitas WHERE acuerdo_visita BETWEEN ? AND ? GROUP BY acuerdo_visita", [inicioMes, finMes]);
+        const [visitasPorDia] = await pool.execute("SELECT a.fecha, COUNT(*) as total FROM tab_agenda_visitas a WHERE a.fecha BETWEEN ? AND ? GROUP BY a.fecha", [inicioMes, finMes]);
         const calMap = {};
-        visitasPorDia.forEach(v => { calMap[v.acuerdo_visita] = v.total; });
+        visitasPorDia.forEach(v => { calMap[v.fecha] = v.total; });
         const diasSemana = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
         let calRows = '';
         let diaCelda = 1;
@@ -2388,7 +2407,7 @@ const server = http.createServer(async (req, res) => {
         </div>
         <div class="table-responsive">
         <table class="table table-hover table-sm align-middle">
-        <thead class="table-light"><tr><th style="width:36px">Sel</th><th>ID</th><th>Fecha Reg.</th><th>Cliente</th><th>Celular</th><th>Vendedor</th><th>Zona</th><th>Acuerdo</th><th>Motivo</th><th>¿Hecha?</th></tr></thead>
+        <thead class="table-light"><tr><th style="width:36px">Sel</th><th>ID</th><th>Fecha</th><th>Cliente</th><th>Celular</th><th>Vendedor</th><th>Zona</th><th>Acuerdo</th><th>Observación</th><th>Estado</th></tr></thead>
         <tbody>${rows || '<tr><td colspan="10" class="text-center text-muted">Sin visitas</td></tr>'}</tbody>
         </table></div></div>
         <a href="/" class="btn btn-outline-secondary mt-2 no-print">⬅ Volver</a>
@@ -2425,7 +2444,7 @@ const server = http.createServer(async (req, res) => {
         req.on('end', async () => {
             try {
                 const data = JSON.parse(b);
-                const [r] = await pool.execute("UPDATE tab_visitas SET acuerdo_visita = ? WHERE id_visita = ?", [data.nueva_fecha, data.id_visita]);
+                await dualExecute("UPDATE tab_agenda_visitas SET fecha = ? WHERE id_agenda = ?", [data.nueva_fecha, data.id_visita]);
                 res.end(`✅ Visita #${data.id_visita} reprogramada para ${data.nueva_fecha}.`);
             } catch (e) { res.end("Error: " + e.message); }
         });
@@ -2605,10 +2624,9 @@ const server = http.createServer(async (req, res) => {
                         const vendNom = c.vendedor || '';
                         const [vend] = await pool.execute("SELECT id_vendedor FROM tab_vendedores WHERE nombre = ? LIMIT 1", [vendNom]);
                         const idV = vend.length > 0 ? vend[0].id_vendedor : 0;
-                        const acuerdo = new Date(fecha);
-                        await pool.execute(
-                            `INSERT INTO tab_visitas (fecha_reg, rif, id_cliente, nombres, direccion, telefono, celular, id_vendedor, nombre, direcciongooglemap, zona, visita_realizada, contador_visitas, motivo, logro, acuerdo_visita, dias_frecuencia, interes_producto) VALUES (CURDATE(), '', ?, ?, ?, ?, ?, ?, ?, '', ?, 'NO', 1, 'Agendamiento masivo por zona', 'NO', ?, ?, 'SI')`,
-                            [c.id_cliente, c.nombres, c.direccion || '', c.telefono || '', c.celular, idV, vendNom, c.zona, acuerdo, parseInt(frecuencia) || 0]
+                        await dualExecute(
+                            "INSERT IGNORE INTO tab_agenda_visitas (id_cliente, fecha, estado, frecuencia_dias, observacion) VALUES (?, ?, 'pendiente', ?, ?)",
+                            [c.id_cliente, fecha, parseInt(frecuencia) || null, 'Agendamiento masivo por zona']
                         );
                         ins++;
                         await sleep(500);
@@ -2624,14 +2642,46 @@ const server = http.createServer(async (req, res) => {
                 const data = JSON.parse(b);
                 const { desde, hasta } = data;
                 if (!desde || !hasta) { res.end("Faltan fechas."); return; }
-                const [result] = await pool.execute("UPDATE tab_visitas SET acuerdo_visita = ? WHERE acuerdo_visita = ?", [hasta, desde]);
+                const [result] = await dualExecute("UPDATE tab_agenda_visitas SET fecha = ? WHERE fecha = ? AND estado IN ('pendiente','no_contesto','ausente','pospuso')", [hasta, desde]);
                 res.end(`✅ ${result.affectedRows} visita(s) movida(s) de ${desde} a ${hasta}.`);
             } catch (e) { res.end("Error: " + e.message); }
         });
+    } else if (routename === '/sync-agenda') {
+        try {
+            const sqlCreate = `CREATE TABLE IF NOT EXISTS tab_agenda_visitas (
+                id_agenda INT AUTO_INCREMENT PRIMARY KEY,
+                id_cliente INT NOT NULL,
+                fecha DATE NOT NULL,
+                hora TIME DEFAULT NULL,
+                frecuencia_dias INT DEFAULT NULL,
+                estado VARCHAR(20) DEFAULT 'pendiente',
+                fecha_origen DATE DEFAULT NULL,
+                observacion TEXT DEFAULT NULL,
+                INDEX idx_fecha_estado (fecha, estado),
+                INDEX idx_cliente (id_cliente)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_spanish_ci`;
+            await poolLocal.execute(sqlCreate);
+            await pool.execute(sqlCreate);
+            const [locales] = await poolLocal.execute("SELECT * FROM tab_agenda_visitas ORDER BY id_agenda");
+            let insertados = 0;
+            for (const rec of locales) {
+                const [existe] = await pool.execute("SELECT id_agenda FROM tab_agenda_visitas WHERE id_agenda = ?", [rec.id_agenda]);
+                if (existe.length === 0) {
+                    try {
+                        await pool.execute(
+                            "INSERT INTO tab_agenda_visitas (id_agenda, id_cliente, fecha, hora, frecuencia_dias, estado, fecha_origen, observacion) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                            [rec.id_agenda, rec.id_cliente, rec.fecha, rec.hora || null, rec.frecuencia_dias || null, rec.estado || 'pendiente', rec.fecha_origen || null, rec.observacion || null]
+                        );
+                        insertados++;
+                    } catch (e) { console.log("[SYNC] Error insertando id_agenda=" + rec.id_agenda + ":", e.message); }
+                }
+            }
+            res.end(`<html><body style="font-family:sans-serif;padding:20px"><h2>✅ Sincronización completada</h2><p>Registros locales: ${locales.length}</p><p>Copiados a remoto: ${insertados}</p><p>Ya existían en remoto: ${locales.length - insertados}</p><a href="/" style="display:inline-block;margin-top:12px;padding:8px 20px;background:#333;color:#fff;border-radius:6px;text-decoration:none">Volver</a></body></html>`);
+        } catch (e) { res.end("Error: " + e.message); }
     } else {
         const [zonas] = await pool.execute("SELECT DISTINCT zona FROM tab_clientes WHERE zona != '' AND zona IS NOT NULL ORDER BY zona");
         const zonaOptsMain = zonas.map(z => `<option value="${z.zona}">${z.zona}</option>`).join('');
-        const [stats] = await pool.execute("SELECT COUNT(*) as total FROM tab_visitas WHERE visita_realizada='NO'");
+        const [stats] = await pool.execute("SELECT COUNT(*) as total FROM tab_agenda_visitas WHERE estado IN ('pendiente','no_contesto','ausente','pospuso') OR estado IS NULL");
         const pendientes = stats[0]?.total || 0;
         res.end(`<!DOCTYPE html>
 <html lang="es">
@@ -2790,6 +2840,19 @@ ${qrCodeData.startsWith('data') ? `
 <small class="text-white-50 text-uppercase" style="font-size:0.65rem;letter-spacing:0.5px">Reset</small>
 </div>
 <span class="fw-bold" style="font-size:0.95rem">Nuevo QR</span>
+</div>
+</div>
+</a>
+</div>
+<div class="col-6 col-sm-4 col-md-3">
+<a href="/sync-agenda" class="text-decoration-none" onclick="return confirm('¿Sincronizar agenda local → remoto?')">
+<div class="card-dash h-100">
+<div class="card-body">
+<div class="d-flex align-items-center gap-3 mb-2">
+<div class="icon-box" style="background:rgba(13,202,240,0.2);color:#6edff6"><i class="bi bi-cloud-arrow-up"></i></div>
+<small class="text-white-50 text-uppercase" style="font-size:0.65rem;letter-spacing:0.5px">Sync</small>
+</div>
+<span class="fw-bold" style="font-size:0.95rem">Sincronizar Agenda</span>
 </div>
 </div>
 </a>
