@@ -1143,186 +1143,6 @@ async function checkEstadisticasVendedores(force = false) {
 const SEND_DEFAULTS = { batchSize: 10, pauseSend: 30000, pauseBatch: 600000 };
 let sendConfig = { ...SEND_DEFAULTS };
 
-// ===== RECORDATORIO SEMANAL DE VISITA A CLIENTES VENCIDOS =====
-let recordatorioVisitaEjecutando = false;
-
-const IMG_PRODUCTOS_ONE4CARS = "https://one4cars.com/imagen/productos_one4cars.jpg";
-
-async function checkRecordatorioVisitaSemanal(force = false) {
-    if (!isBotReady()) return;
-    if (recordatorioVisitaEjecutando && !force) return;
-    recordatorioVisitaEjecutando = true;
-
-    const hoy = new Date();
-    const hoyStr = hoy.toISOString().split('T')[0];
-    const lunes = new Date(hoy);
-    lunes.setDate(lunes.getDate() - ((hoy.getDay() + 6) % 7));
-    const semanaInicio = lunes.toISOString().split('T')[0];
-
-    try {
-        const [clientes] = await pool.execute(`
-            SELECT DISTINCT c.id_cliente, c.nombres, c.celular, c.telefono, c.direccion, c.zona,
-                   v.id_vendedor, v.nombre as vendedor_nombre, v.celular_vendedor
-            FROM tab_clientes c
-            LEFT JOIN tab_vendedores v ON c.vendedor = v.nombre
-            WHERE c.activo = 'si'
-              AND EXISTS (
-                SELECT 1 FROM tab_facturas f
-                WHERE f.id_cliente = c.id_cliente
-                  AND f.anulado = 'no'
-                  AND DATEDIFF(CURDATE(), f.fecha_reg) >= 45
-              )
-              AND NOT EXISTS (
-                SELECT 1 FROM tab_facturas f
-                WHERE f.id_cliente = c.id_cliente
-                  AND f.anulado = 'no'
-                  AND f.pagada = 'NO'
-              )
-        `);
-
-        let cont = 0;
-        const batchSize = sendConfig.batchSize;
-        const pauseBatch = sendConfig.pauseBatch;
-
-        for (let i = 0; i < clientes.length; i++) {
-            const c = clientes[i];
-
-            if (i > 0 && i % batchSize === 0) {
-                console.log(`[RECORDATORIO VISITA] Pausa lote ${i}/${clientes.length}...`);
-                await randomBatchPause();
-            }
-
-            const [yaEnviado] = await pool.execute(
-                "SELECT id FROM recordatorio_visita_log WHERE id_cliente = ? AND semana_inicio = ?",
-                [c.id_cliente, semanaInicio]
-            );
-            if (yaEnviado.length > 0 && !force) continue;
-
-            const jid = formatWhatsApp(c.celular);
-            if (!jid) continue;
-
-            const vendedorNombre = c.vendedor_nombre || 'tu vendedor asignado';
-
-            const tplVisita = pickTemplate(MESSAGE_TEMPLATES.visita);
-            const introPersonal = tplVisita(c.nombres);
-            const mensaje = `${introPersonal}\n\nEn *ONE4CARS* creemos en la *atención esmerada y personalizada*. Por eso cuentas con un equipo humano comprometido en brindarte el mejor servicio, desde la asesoría técnica hasta la entrega de tus pedidos.\n\n🤝 *Nuestra solidaridad comercial*\nEntendemos los momentos difíciles y estamos dispuestos a conversar contigo para llegar a acuerdos que beneficien a ambas partes. Queremos que sigas creciendo y que nosotros seamos parte de ese crecimiento.\n\n👤 *Tu vendedor asignado:* ${vendedorNombre}\n📞 Contáctalo directamente para recibir atención personalizada.\n\n📅 *¿Quieres que un representante te visite?*\nEstaremos encantados de coordinar una visita para conocer tus necesidades en detalle y ofrecerte soluciones a la medida. ¡Solo confírmalo respondiendo a este mensaje!\n\n*ONE4CARS — Contigo, siempre avanzando.* 🚀`;
-
-            try {
-                await socketBot.sendMessage(jid, {
-                    image: { url: IMG_PRODUCTOS_ONE4CARS },
-                    caption: mensaje
-                });
-            } catch (e) {
-                console.log(`[RECORDATORIO VISITA] Imagen falló, enviando texto a ${c.nombres}:`, e.message);
-                try { await socketBot.sendMessage(jid, { text: mensaje }); } catch (e2) {
-                    console.log(`[RECORDATORIO VISITA] Texto también falló con ${c.nombres}:`, e2.message);
-                    continue;
-                }
-            }
-            console.log(`[RECORDATORIO VISITA] ✅ (${i+1}/${clientes.length}) Enviado a ${c.nombres} (${c.celular})`);
-
-            try {
-                const acuerdo = new Date();
-                acuerdo.setDate(acuerdo.getDate() + 3);
-                await pool.execute(
-                    `INSERT INTO tab_visitas 
-                     (fecha_reg, rif, id_cliente, nombres, direccion, telefono, celular, id_vendedor, nombre, 
-                      direcciongooglemap, zona, visita_realizada, contador_visitas, motivo, logro, acuerdo_visita, 
-                      dias_frecuencia, interes_producto) 
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NO', 1, ?, 'NO', ?, 0, 'SI')`,
-                    [
-                        hoyStr, '', c.id_cliente, c.nombres, c.direccion || '', c.telefono || '',
-                        c.celular, c.id_vendedor || 0, vendedorNombre, '', c.zona || '',
-                        'Recordatorio comercial: visita de seguimiento y atención al cliente', acuerdo
-                    ]
-                );
-
-                await pool.execute(
-                    "INSERT INTO recordatorio_visita_log (id_cliente, semana_inicio) VALUES (?, ?)",
-                    [c.id_cliente, semanaInicio]
-                );
-
-                cont++;
-            } catch (e) {
-                console.log(`[RECORDATORIO VISITA] Error DB con ${c.nombres}:`, e.message);
-            }
-            await sleep(sendConfig.pauseSend);
-        }
-
-        console.log(`[RECORDATORIO VISITA] ${cont}/${clientes.length} cliente(s) notificado(s) esta semana.`);
-    } catch (e) {
-        console.log("[RECORDATORIO VISITA] Error general:", e.message);
-    } finally {
-        recordatorioVisitaEjecutando = false;
-    }
-}
-
-async function checkRecordatorioVisitaSemanalPorIds(ids) {
-    if (!isBotReady()) return;
-    const hoy = new Date();
-    const hoyStr = hoy.toISOString().split('T')[0];
-    const lunes = new Date(hoy);
-    lunes.setDate(lunes.getDate() - ((lunes.getDay() + 6) % 7));
-    const semanaInicio = lunes.toISOString().split('T')[0];
-    let cont = 0;
-    const batchSize = sendConfig.batchSize;
-    const pauseBatch = sendConfig.pauseBatch;
-
-    for (let i = 0; i < ids.length; i++) {
-        const id = ids[i];
-
-        if (i > 0 && i % batchSize === 0) {
-            console.log(`[RECORDATORIO VISITA] Pausa tras lote ${i}/${ids.length} manual...`);
-            await randomBatchPause();
-        }
-
-        const [clientes] = await pool.execute(`
-            SELECT DISTINCT c.id_cliente, c.nombres, c.celular, c.telefono, c.direccion, c.zona,
-                   v.id_vendedor, v.nombre as vendedor_nombre, v.celular_vendedor
-            FROM tab_clientes c
-            LEFT JOIN tab_vendedores v ON c.vendedor = v.nombre
-            WHERE c.id_cliente = ? AND c.activo = 'si' LIMIT 1
-        `, [id]);
-        const c = clientes[0];
-        if (!c) continue;
-
-        const jid = formatWhatsApp(c.celular);
-        if (!jid) continue;
-
-        const vendedorNombre = c.vendedor_nombre || 'tu vendedor asignado';
-        const tplVisita = pickTemplate(MESSAGE_TEMPLATES.visita);
-        const introPersonal = tplVisita(c.nombres);
-        const mensaje = `${introPersonal}\n\nEn *ONE4CARS* creemos en la *atención esmerada y personalizada*. Por eso cuentas con un equipo humano comprometido en brindarte el mejor servicio, desde la asesoría técnica hasta la entrega de tus pedidos.\n\n🤝 *Nuestra solidaridad comercial*\nEntendemos los momentos difíciles y estamos dispuestos a conversar contigo para llegar a acuerdos que beneficien a ambas partes. Queremos que sigas creciendo y que nosotros seamos parte de ese crecimiento.\n\n👤 *Tu vendedor asignado:* ${vendedorNombre}\n📞 Contáctalo directamente para recibir atención personalizada.\n\n📅 *¿Quieres que un representante te visite?*\nEstaremos encantados de coordinar una visita para conocer tus necesidades en detalle y ofrecerte soluciones a la medida. ¡Solo confírmalo respondiendo a este mensaje!\n\n*ONE4CARS — Contigo, siempre avanzando.* 🚀`;
-
-        try {
-            await socketBot.sendMessage(jid, {
-                image: { url: IMG_PRODUCTOS_ONE4CARS },
-                caption: mensaje
-            });
-        } catch (e) {
-            console.log(`[RECORDATORIO VISITA] Imagen falló, enviando texto a ${c.nombres}:`, e.message);
-            try { await socketBot.sendMessage(jid, { text: mensaje }); } catch (e2) {
-                console.log(`[RECORDATORIO VISITA] Texto también falló con ${c.nombres}:`, e2.message);
-                continue;
-            }
-        }
-        try {
-            const acuerdo = new Date();
-            acuerdo.setDate(acuerdo.getDate() + 3);
-            await pool.execute(
-                `INSERT INTO tab_visitas (fecha_reg, rif, id_cliente, nombres, direccion, telefono, celular, id_vendedor, nombre, direcciongooglemap, zona, visita_realizada, contador_visitas, motivo, logro, acuerdo_visita, dias_frecuencia, interes_producto) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NO', 1, ?, 'NO', ?, 0, 'SI')`,
-                [hoyStr, '', c.id_cliente, c.nombres, c.direccion || '', c.telefono || '', c.celular, c.id_vendedor || 0, vendedorNombre, '', c.zona || '', 'Recordatorio comercial: visita de seguimiento y atención al cliente', acuerdo]
-            );
-            await pool.execute("INSERT INTO recordatorio_visita_log (id_cliente, semana_inicio) VALUES (?, ?)", [c.id_cliente, semanaInicio]);
-            cont++;
-            await humanDelay(20, 45);
-        } catch (e) {
-            console.log(`[RECORDATORIO VISITA] Error DB con ${c.nombres}:`, e.message);
-        }
-    }
-    console.log(`[RECORDATORIO VISITA] ${cont} cliente(s) notificado(s) manualmente.`);
-}
-
 // ===== BOT WHATSAPP =====
 async function startBot() {
     if (socketBot) {
@@ -1360,10 +1180,6 @@ async function startBot() {
                 
                 // Temporizador automático de Estadísticas activado (revisa cada 30 min)
                 setInterval(checkEstadisticasVendedores, 1800000);
-
-                // Recordatorio semanal de visita a clientes con facturas vencidas (+45 días)
-                setInterval(checkRecordatorioVisitaSemanal, 604800000);
-                setTimeout(() => checkRecordatorioVisitaSemanal(), 30000);
                 
                 setInterval(() => {
                     if (!isBotReady() && socketBot) startBot();
@@ -2065,19 +1881,6 @@ const server = http.createServer(async (req, res) => {
         const [msgs] = await pool.execute("SELECT h.id, h.telefono, h.rol, h.contenido, h.fecha FROM historial_chat h ORDER BY h.fecha DESC LIMIT 200");
         const rows = msgs.map(m => `<tr><td>${m.telefono}</td><td class="${m.rol === 'user' ? 'text-primary' : 'text-success'}">${m.rol}</td><td style="max-width:400px;word-break:break-word">${m.contenido}</td><td>${new Date(m.fecha).toLocaleString()}</td></tr>`).join('');
         res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><title>Historial Chat</title></head><body class="bg-light">${header}<div class="container mt-3"><h3>💬 Historial de Conversaciones</h3><div class="table-responsive"><table class="table table-sm table-striped"><thead><tr><th>Teléfono</th><th>Rol</th><th>Mensaje</th><th>Fecha</th></tr></thead><tbody>${rows}</tbody></table></div><a href="/" class="btn btn-outline-secondary">Volver</a></div></body></html>`);
-    } else if (routename === '/enviar-recordatorio-visita' && req.method === 'POST') {
-        if (!isBotReady()) { res.end("Bot no listo."); return; }
-        let b = ''; req.on('data', c => b += c);
-        req.on('end', () => {
-            try {
-                const data = JSON.parse(b);
-                const ids = data.clientes || [];
-                if (ids.length === 0) { res.end("Ningún cliente seleccionado."); return; }
-                res.end(`✅ Envío iniciado para ${ids.length} cliente(s).`);
-                recordatorioVisitaEjecutando = false;
-                setTimeout(() => checkRecordatorioVisitaSemanalPorIds(ids), 500);
-            } catch (e) { res.end("Error: " + e.message); }
-        });
     } else if (routename === '/set-send-config' && req.method === 'POST') {
         let b = ''; req.on('data', c => b += c);
         req.on('end', () => {
@@ -2090,12 +1893,9 @@ const server = http.createServer(async (req, res) => {
             } catch (e) { res.end("Error"); }
         });
     } else if (routename === '/recordatorio-visita') {
-        if (query.action === 'force') {
-            if (!isBotReady()) { res.writeHead(302, { Location: '/recordatorio-visita?error=Bot+no+listo' }); res.end(); return; }
-            recordatorioVisitaEjecutando = false;
-            res.writeHead(302, { Location: '/recordatorio-visita?success=Forzado+iniciado+en+segundo+plano' });
+        if (query.action === 'force' || query.success || query.error) {
+            res.writeHead(302, { Location: '/recordatorio-visita' });
             res.end();
-            setTimeout(() => checkRecordatorioVisitaSemanal(true), 500);
             return;
         }
 
@@ -2371,6 +2171,7 @@ const server = http.createServer(async (req, res) => {
         const meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 
         res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"><title>Visitas Agendadas</title><style>body{background:#f4f7f6}.card-custom{border-radius:12px;border:none;box-shadow:0 2px 8px rgba(0,0,0,0.06)}@media print{body{background:#fff}.no-print,.no-print-table{display:none!important}.card-custom{box-shadow:none;border:1px solid #ddd}table{font-size:11px}td:first-child,th:first-child{display:none}}</style></head><body class="bg-light">${header}
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
         <div class="container-fluid px-4 mt-3">
         <h3>📅 Agenda de Visitas</h3>
 
@@ -2516,7 +2317,21 @@ const server = http.createServer(async (req, res) => {
             }catch(e){alert('Error: '+e.message);}
             return false;
         }
+        async function verHistorial(idCliente){
+            const r=await fetch('/historial-cliente?id_cliente='+idCliente);
+            const data=await r.json();
+            if(!data.length){alert('Sin historial.');return false;}
+            let h='<table class="table table-sm table-striped mb-0"><thead><tr><th>Fecha</th><th>Estado</th><th>Observación</th></tr></thead><tbody>';
+            data.forEach(v=>{h+='<tr><td>'+v.fecha+'</td><td><span class="badge bg-secondary">'+(v.estado||'pendiente')+'</span></td><td>'+(v.observacion||'')+'</td></tr>';});
+            h+='</tbody></table>';
+            const d=document.getElementById('historialModal');
+            d.querySelector('.modal-body').innerHTML=h;
+            new bootstrap.Modal(d).show();
+            return false;
+        }
         </script>
+        <!-- Historial Modal -->
+        <div class="modal fade" id="historialModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header"><h5 class="modal-title">Historial de Visitas</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"></div></div></div></div>
         </body></html>`);
     } else if (routename === '/accion-visita' && req.method === 'POST') {
         let b = ''; req.on('data', c => b += c);
