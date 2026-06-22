@@ -107,6 +107,10 @@ const MENU_INTENTIONS = {
     '9': {
         keywords: ['asesor humano', 'hablar con un operador', 'soporte humano', 'quiero hablar con alguien', 'ayuda de un operador', 'contactar asesor', 'contacta un asesor', 'asesor de filtros', 'asesor se comunique', 'hablar con asesor', 'operador humano', 'comuniquen con un asesor', 'comunique con un asesor', 'asesor me contacte'],
         response: `9️⃣ *Asesor Humano:* Indique su duda y un operador revisará el caso pronto. 👩‍💻`
+    },
+    '10': {
+        keywords: ['visitas hoy', 'visitas de hoy', 'reporte de visitas', 'agenda de hoy', 'cuantas visitas tengo hoy', 'visitas del dia'],
+        response: `VISITAS_HOY`
     }
 };
 
@@ -1314,6 +1318,25 @@ async function startBot() {
                     }
                     const respExtendida = `${menuOption}\n\n📅 *Nota:* Hemos detectado que solicitas una visita. La hemos agendado automáticamente para que un operador te contacte pronto.`;
                     return await safeSendMessage(from, { text: respExtendida });
+                }
+                if (menuOption === 'VISITAS_HOY') {
+                    const hoyStr = new Date().toISOString().split('T')[0];
+                    try {
+                        const [vis] = await pool.execute("SELECT a.id_agenda, a.hora, c.nombres, c.celular, c.zona, c.direccion FROM tab_agenda_visitas a JOIN tab_clientes c ON a.id_cliente = c.id_cliente WHERE a.fecha = ? AND (a.estado IN ('pendiente','no_contesto','ausente','pospuso') OR a.estado IS NULL) ORDER BY c.zona, c.nombres", [hoyStr]);
+                        if (vis.length === 0) return await safeSendMessage(from, { text: `📅 *Visitas de Hoy (${hoyStr})*\n\n✅ No hay visitas pendientes para hoy.` });
+                        const zonas = [...new Set(vis.map(v => v.zona))];
+                        let reporte = `📅 *Visitas de Hoy (${hoyStr})*\nTotal: *${vis.length}* | Zonas: *${zonas.length}*\n\n`;
+                        let zonaAct = '';
+                        vis.forEach((v, i) => {
+                            if (v.zona !== zonaAct) { zonaAct = v.zona; reporte += `\n📍 *${zonaAct || 'Sin zona'}*\n`; }
+                            reporte += `  ${i+1}. ${v.nombres} ${v.hora ? '🕐'+v.hora.substring(0,5) : ''}\n     📞 ${v.celular || '—'}\n`;
+                        });
+                        reporte += `\n🔗 ${process.env.BASE_URL || 'https://bot-whatsapp-gratis1.onrender.com'}/visitas?fecha=${hoyStr}`;
+                        return await safeSendMessage(from, { text: reporte });
+                    } catch (e) {
+                        console.log("[VISITAS HOY] Error:", e.message);
+                        return await safeSendMessage(from, { text: "❌ Error al obtener el reporte de visitas." });
+                    }
                 }
                 return await safeSendMessage(from, { text: menuOption });
             }
