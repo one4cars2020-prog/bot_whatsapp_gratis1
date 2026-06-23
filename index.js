@@ -121,6 +121,7 @@ let notificadorInterval = null;
 const pendientesConfirmacion = new Map();
 const carritoCompras = new Map();
 const agendaVisitas = new Map();
+const pendingProductSelection = new Map();
 
 const VISIT_KEYWORDS = [
     'me visite', 'me visiten', 'me visita', 'pase por', 'pasar por',
@@ -148,6 +149,78 @@ const DIAS_SEMANA = {
     'lunes': 1, 'martes': 2, 'miercoles': 3, 'miércoles': 3,
     'jueves': 4, 'viernes': 5, 'sabado': 6, 'sábado': 6, 'domingo': 0
 };
+
+const PRODUCT_KEYWORDS = [
+    'filtro', 'filtros', 'aceite', 'bujia', 'bujias', 'freno', 'frenos',
+    'pastilla', 'pastillas', 'disco', 'discos', 'correa', 'correas',
+    'rodamiento', 'rodamientos', 'rodaje', 'amortiguador', 'amortiguadores',
+    'reten', 'retones', 'estopera', 'estoperas', 'empaque', 'empaques',
+    'caucho', 'cauchos', 'neumatico', 'neumaticos', 'goma', 'gomas',
+    'bateria', 'baterias', 'radiador', 'radiadores', 'ventilador', 'ventiladores',
+    'alternador', 'alternadores', 'arranque', 'motor', 'motores',
+    'valvula', 'valvulas', 'sensor', 'sensores', 'switch', 'interruptor',
+    'manguera', 'mangueras', 'tapa', 'tapas', 'tanque', 'tanques',
+    'bomba', 'bombas', 'inyector', 'inyectores', 'carburador', 'carburadores',
+    'culata', 'culatas', 'cigueñal', 'cigüeñal', 'piston', 'pistones',
+    'anillo', 'anillos', 'casquillo', 'casquillos', 'biela', 'bielas',
+    'leva', 'levas', 'arbol', 'árbol', 'banda', 'bandas', 'cadena', 'cadenas',
+    'tensor', 'tensores', 'polea', 'poleas', 'alternador', 'alternadores',
+    'compresor', 'compresores', 'aire', 'acondicionado', 'calefaccion',
+    'luz', 'luces', 'foco', 'focos', 'farol', 'faroles', 'lampara', 'lamparas',
+    'parrilla', 'parachoques', 'guardafango', 'capot', 'capota',
+    'puerta', 'puertas', 'manija', 'manijas', 'manilla', 'manillas',
+    'cristal', 'cristales', 'vidrio', 'vidrios', 'parabrisas',
+    'espejo', 'espejos', 'retrovisor', 'retrovisores',
+    'asiento', 'asientos', 'tablero', 'instrumentos', 'reloj', 'relojes',
+    'volante', 'volantes', 'bocina', 'bocinas', 'claxon',
+    'llanta', 'llantas', 'rin', 'rines', 'tapa', 'tapas',
+    'suspension', 'suspensión', 'barra', 'barras', 'estabilizador',
+    'rotula', 'rotulas', 'axial', 'terminal', 'terminales',
+    'caja', 'direccion', 'cremallera', 'cardan', 'cardanes',
+    'embrague', 'clutch', 'presion', 'presión', 'plato', 'platos',
+    'transmision', 'transmisión', 'diferencial', 'junta', 'juntas',
+    'homocinetica', 'homocinética', 'homocinetico', 'homocinético',
+    'tripoide', 'tripoides', 'maza', 'cubo', 'rueda', 'ruedas',
+    'tornillo', 'tornillos', 'tuerca', 'tuercas', 'perno', 'pernos',
+    'esparrago', 'esparragos', 'arandela', 'arandelas', 'seguro', 'seguros',
+    'pasador', 'pasadores', 'chaveta', 'chavetas',
+    'silenciador', 'silenciadores', 'tubo', 'tubos', 'escape', 'escarpe',
+    'multiple', 'múltiple', 'colector', 'colectores',
+    'catalizador', 'catalizadores', 'oxigeno', 'oxígeno',
+    'liquido', 'líquido', 'refrigerante', 'anticongelante',
+    'lubricante', 'grasa', 'aceite', 'hidraulico', 'hidráulico',
+    'lata', 'latas', 'pintura', 'pinturas', 'thinner', 'solvente',
+    'pulido', 'cera', 'ceras', 'shampoo', 'silicona',
+    'kit', 'kits', 'juego', 'juegos', 'set', 'pack',
+    'original', 'alternativo', 'generico', 'genérico', 'importado',
+    'codigo', 'código', 'pieza', 'piezas', 'parte', 'partes',
+    'rodamiento', 'descripcion', 'precio', 'costo', 'valor',
+    'marca', 'marcas', 'modelo', 'modelos', 'ano', 'año', 'años',
+    'diesel', 'gasolina', 'gas', 'gnv', 'electrico', 'eléctrico',
+    'delantero', 'delanteros', 'delantera', 'trasero', 'traseros', 'trasera',
+    'superior', 'inferior', 'lateral', 'central', 'interior', 'exterior',
+    'rolinera', 'rolineras', 'ruleman', 'rulemanes', 'cojinete', 'cojinetes',
+    'sello', 'sellos', 'packing', 'empaquetadura', 'empaquetaduras',
+    'silicon', 'silicona', 'pegamento', 'pega', 'adhesivo',
+    'limpiador', 'limpiadores', 'desengrasante', 'desengrasantes',
+    'bujia', 'bujias', 'cable', 'cables', 'bobina', 'bobinas',
+    'distribuidor', 'distribuidores', 'rotor', 'rotor',
+    'tapa', 'tapas', 'delco', 'plato', 'platinos',
+    'modulo', 'módulo', 'módulos', 'electronico', 'electrónico',
+    'fusible', 'fusibles', 'relay', 'relays', 'relé', 'rele',
+    'computadora', 'computador', 'ecu', 'centralita',
+    'llave', 'llaves', 'switch', 'cerradura', 'cerraduras',
+    'bocacho', 'bocachos', 'trompo', 'trompos', 'campana', 'campanas',
+    'tambor', 'tambores', 'plato', 'platos', 'balata', 'balatas',
+    'zapata', 'zapatas', 'cilindro', 'cilindros', 'bomba', 'bombas',
+    'servofreno', 'servofrenos', 'master', 'booster',
+    'muelle', 'muelles', 'resorte', 'resortes', 'espiral',
+    'plato', 'platos', 'disco', 'discos', 'campana', 'campanas',
+    'caliper', 'calipers', 'mordaza', 'mordazas', 'pistola', 'pistolas',
+    'pinza', 'pinzas', 'tester', 'multimetro', 'probador',
+    'gata', 'gatas', 'gato', 'gatos', 'hidraulico', 'hidráulico',
+    'cargador', 'cargadores', 'arrancador', 'arrancadores', 'pasacorriente'
+];
 
 // ===== FUNCIONES DE APOYO =====
 
@@ -547,7 +620,25 @@ async function initDB() {
             dias_frecuencia INT DEFAULT 0,
             interes_producto VARCHAR(10) DEFAULT 'SI'
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci`);
-        
+
+        // Migración: eliminar duplicados en tab_agenda_visitas y agregar UNIQUE(id_cliente, fecha)
+        try {
+            await pool.execute(`
+                DELETE a FROM tab_agenda_visitas a
+                INNER JOIN tab_agenda_visitas b
+                ON a.id_cliente = b.id_cliente AND a.fecha = b.fecha AND a.id_agenda > b.id_agenda
+            `);
+            try { await pool.execute("ALTER TABLE tab_agenda_visitas ADD UNIQUE INDEX uq_cliente_fecha (id_cliente, fecha)"); } catch (e) {}
+        } catch (e) { console.log("[DB] Migración agenda remota:", e.message); }
+        try {
+            await poolLocal.execute(`
+                DELETE a FROM tab_agenda_visitas a
+                INNER JOIN tab_agenda_visitas b
+                ON a.id_cliente = b.id_cliente AND a.fecha = b.fecha AND a.id_agenda > b.id_agenda
+            `);
+            try { await poolLocal.execute("ALTER TABLE tab_agenda_visitas ADD UNIQUE INDEX uq_cliente_fecha (id_cliente, fecha)"); } catch (e) {}
+        } catch (e) { console.log("[DB] Migración agenda local:", e.message); }
+
         console.log("✅ Base de Datos vinculada.");
     } catch (e) { console.log("❌ Error DB Init:", e.message); }
 }
@@ -1341,6 +1432,31 @@ async function startBot() {
                 return await safeSendMessage(from, { text: menuOption });
             }
 
+            // --- 2b. SELECCIÓN DE PRODUCTO (respuesta a multi-opciones) ---
+            const pendingSel = pendingProductSelection.get(from);
+            if (pendingSel && /^\d{1,2}$/.test(text)) {
+                const idx = parseInt(text) - 1;
+                if (idx >= 0 && idx < pendingSel.productos.length) {
+                    const p = pendingSel.productos[idx];
+                    const pct = pendingSel.pct;
+                    pendingProductSelection.delete(from);
+                    const precio = parseFloat(p.precio_minimo || 0) / pct;
+                    let infoStock = "";
+                    if (parseFloat(p.stock_total || 0) <= 0) {
+                        const fab = parseFloat(p.cantidad_fabricando || 0);
+                        infoStock = fab > 0 ? "\n🏭 *EN FÁBRICA (Próximo a llegar)*" : "\n❌ *Sin existencia, solo información*";
+                    } else { infoStock = "\n✅ *Disponible*"; }
+                    const caption = `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio: $${precio.toFixed(2)} (Pagadero a tasa BCV)*${infoStock}\n📝 ${p.descripcion}\n🔗 Ficha: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}`;
+                    const imgUrl = `https://one4cars.com/imagen/${p.producto}.jpg`;
+                    try {
+                        await socketBot.sendMessage(from, { image: { url: imgUrl }, caption: caption });
+                    } catch (imgErr) {
+                        await safeSendMessage(from, { text: caption });
+                    }
+                    return;
+                }
+            }
+
             // --- 3. LÓGICA DE PAGOS ---
             if (text === 'pago fact' || text === 'abono'  || text.includes('pago') || text.includes('al señor oscar') || text.includes('envié el pago') || text.includes('adjunto pago')) {
                 const nombreUsuario = vendedor ? vendedor.nombre : pushName;
@@ -1630,20 +1746,49 @@ async function startBot() {
             const esAutoReply = autoReplyFrasi.some(f => rawText.toLowerCase().includes(f));
             if (!esAutoReply && text !== 'menu' && !['hola', 'buen dia', 'buenos dias'].includes(text)) {
                 try {
-                    let prods = null;
-                    const sinStop = rawText.split(/\s+/).filter(p => p.replace(/[^a-zA-Z0-9]/g, '').length >= 4);
-                    
                     const palabrasEnMensaje = rawText.split(/\s+/);
+                    const txtNormal = normalizar(rawText);
+                    const contieneKeyword = PRODUCT_KEYWORDS.some(kw => txtNormal.includes(kw));
+                    const tieneCodigo = palabrasEnMensaje.some(p => {
+                        const c = p.replace(/[^a-zA-Z0-9]/g, '');
+                        return c.length >= 4 && /[A-Za-z]/.test(c) && /[0-9]/.test(c);
+                    });
+
+                    let prods = null;
+                    
+                    // Buscar por código primero
                     for (const p of palabrasEnMensaje) {
-                        const codCandidato = p.replace(/[^a-zA-Z0-9]/g, ''); 
-                        if (codCandidato.length >= 4 && /[A-Za-z]/.test(codCandidato) && /[0-9]/.test(codCandidato)) { 
+                        const codCandidato = p.replace(/[^a-zA-Z0-9]/g, '');
+                        if (codCandidato.length >= 4 && /[A-Za-z]/.test(codCandidato) && /[0-9]/.test(codCandidato)) {
                             prods = await buscarProductoPorCodigo(codCandidato);
-                            if (prods) break; 
+                            if (prods) break;
                         }
                     }
-                    
-                    if (!prods && sinStop.length <= 5) {
-                        prods = await buscarProductoPorTexto(rawText);
+
+                    // Si no hay código y hay keyword de producto, buscar por texto
+                    if (!prods && contieneKeyword) {
+                        // Extraer cantidad del inicio si existe: "20 Rolineras delanteras de corolla"
+                        let textoBusqueda = rawText;
+                        let cantidadPedido = 0;
+                        const qtyMatch = rawText.match(/^\s*(\d{1,4})\s+(.+)/);
+                        if (qtyMatch) {
+                            cantidadPedido = parseInt(qtyMatch[1]);
+                            textoBusqueda = qtyMatch[2];
+                        }
+                        prods = await buscarProductoPorTexto(textoBusqueda);
+                        
+                        // Si múltiples resultados, presentar opciones
+                        if (prods && prods.length > 1) {
+                            const pct = await obtenerPorcentaje();
+                            let msg = `🔍 *${prods.length} productos encontrados para:* "${textoBusqueda}"\n`;
+                            prods.slice(0, 8).forEach((p, i) => {
+                                const precio = parseFloat(p.precio_minimo || 0) / pct;
+                                msg += `\n*${i+1}.* ${p.producto} — *$${precio.toFixed(2)}*\n   ${p.descripcion.substring(0, 60)}${p.descripcion.length > 60 ? '...' : ''}`;
+                            });
+                            msg += `\n\n📌 Responde el *número* del producto que necesitas.`;
+                            pendingProductSelection.set(from, { productos: prods.slice(0, 8), pct });
+                            return await safeSendMessage(from, { text: msg });
+                        }
                     }
 
                     if (prods) {
@@ -1653,7 +1798,7 @@ async function startBot() {
                         await sleep(1000);
 
                         for (const p of prods.slice(0, 5)) {
-                            if (!isBotReady()) break; 
+                            if (!isBotReady()) break;
                             const precio = parseFloat(p.precio_minimo || 0) / pct;
                             
                             let infoStock = "";
@@ -2604,6 +2749,7 @@ const server = http.createServer(async (req, res) => {
                 estado VARCHAR(20) DEFAULT 'pendiente',
                 fecha_origen DATE DEFAULT NULL,
                 observacion TEXT DEFAULT NULL,
+                UNIQUE KEY uq_cliente_fecha (id_cliente, fecha),
                 INDEX idx_fecha_estado (fecha, estado),
                 INDEX idx_cliente (id_cliente)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_spanish_ci`;
