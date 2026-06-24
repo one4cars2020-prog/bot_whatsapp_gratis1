@@ -1360,6 +1360,31 @@ async function startBot() {
                 }
             }
 
+            // --- 1b. SELECCIÓN DE PRODUCTO (antes del menú para evitar conflicto con números) ---
+            const pendingSel = pendingProductSelection.get(from);
+            if (pendingSel && /^\d{1,2}$/.test(text)) {
+                const idx = parseInt(text) - 1;
+                if (idx >= 0 && idx < pendingSel.productos.length) {
+                    const p = pendingSel.productos[idx];
+                    const pct = pendingSel.pct;
+                    pendingProductSelection.delete(from);
+                    const precio = parseFloat(p.precio_minimo || 0) / pct;
+                    let infoStock = "";
+                    if (parseFloat(p.stock_total || 0) <= 0) {
+                        const fab = parseFloat(p.cantidad_fabricando || 0);
+                        infoStock = fab > 0 ? "\n🏭 *EN FÁBRICA (Próximo a llegar)*" : "\n❌ *Sin existencia, solo información*";
+                    } else { infoStock = "\n✅ *Disponible*"; }
+                    const caption = `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio: $${precio.toFixed(2)} (Pagadero a tasa BCV)*${infoStock}\n📝 ${p.descripcion}\n🔗 Ficha: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}`;
+                    const imgUrl = `https://one4cars.com/imagen/${p.producto}.jpg`;
+                    try {
+                        await socketBot.sendMessage(from, { image: { url: imgUrl }, caption: caption });
+                    } catch (imgErr) {
+                        await safeSendMessage(from, { text: caption });
+                    }
+                    return;
+                }
+            }
+
             // --- 2. DETECCIÓN INTELIGENTE DEL MENÚ ---
             const menuOption = detectarIntencionMenu(text);
             if (menuOption) {
@@ -1430,31 +1455,6 @@ async function startBot() {
                     }
                 }
                 return await safeSendMessage(from, { text: menuOption });
-            }
-
-            // --- 2b. SELECCIÓN DE PRODUCTO (respuesta a multi-opciones) ---
-            const pendingSel = pendingProductSelection.get(from);
-            if (pendingSel && /^\d{1,2}$/.test(text)) {
-                const idx = parseInt(text) - 1;
-                if (idx >= 0 && idx < pendingSel.productos.length) {
-                    const p = pendingSel.productos[idx];
-                    const pct = pendingSel.pct;
-                    pendingProductSelection.delete(from);
-                    const precio = parseFloat(p.precio_minimo || 0) / pct;
-                    let infoStock = "";
-                    if (parseFloat(p.stock_total || 0) <= 0) {
-                        const fab = parseFloat(p.cantidad_fabricando || 0);
-                        infoStock = fab > 0 ? "\n🏭 *EN FÁBRICA (Próximo a llegar)*" : "\n❌ *Sin existencia, solo información*";
-                    } else { infoStock = "\n✅ *Disponible*"; }
-                    const caption = `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio: $${precio.toFixed(2)} (Pagadero a tasa BCV)*${infoStock}\n📝 ${p.descripcion}\n🔗 Ficha: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}`;
-                    const imgUrl = `https://one4cars.com/imagen/${p.producto}.jpg`;
-                    try {
-                        await socketBot.sendMessage(from, { image: { url: imgUrl }, caption: caption });
-                    } catch (imgErr) {
-                        await safeSendMessage(from, { text: caption });
-                    }
-                    return;
-                }
             }
 
             // --- 3. LÓGICA DE PAGOS ---
