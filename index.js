@@ -54,7 +54,24 @@ const dualExecute = async (sql, params) => {
     return r;
 };
 
-const PDF_URL_CATALOGO = "https://www.one4cars.com/sevencorpweb/uploads/precios/Catalogo%20-%20ONE4CARS_compressed.pdf";
+const BROWSERS = [
+    ["ONE4CARS", "Chrome", "1.0.0"],
+    ["ONE4CARS", "Safari", "1.0.0"],
+    ["ONE4CARS", "Edge", "1.0.0"],
+    ["ONE4CARS", "Firefox", "1.0.0"],
+    ["ONE4CARS BOT", "Chrome", "2.0.0"],
+    ["ONE4CARS CRM", "Chrome", "1.5.0"],
+    ["Chrome", "Linux", "120.0.0"],
+    ["Safari", "MacOS", "17.0.0"],
+    ["Edge", "Windows", "118.0.0"],
+    ["Firefox", "Windows", "119.0.0"]
+];
+let browserIndex = 0;
+function getBrowser() {
+    const b = BROWSERS[browserIndex];
+    browserIndex = (browserIndex + 1) % BROWSERS.length;
+    return b;
+}
 
 const MENU_TEXT = `📋 *MENÚ PRINCIPAL ONE4CARS*
 
@@ -271,7 +288,7 @@ const randomDelay = async () => {
     const ms = Math.floor(Math.random() * (25000 - 15000 + 1)) + 15000;
     await sleep(ms);
 };
-const humanDelay = async (minSec = 20, maxSec = 50) => {
+const humanDelay = async (minSec = 40, maxSec = 90) => {
     const ms = Math.floor(Math.random() * ((maxSec - minSec) * 1000 + 1)) + minSec * 1000;
     await sleep(ms);
 };
@@ -320,16 +337,20 @@ const MESSAGE_TEMPLATES = {
 };
 const pickTemplate = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const DIAS_ENVIADOS_HOY = new Set();
-const MAX_ENVIOS_POR_DIA = 60;
+const MAX_ENVIOS_POR_DIA = 20;
+let enviadosHoy = 0;
 function chequearLimiteDiario() {
     const hoy = new Date().toDateString();
     if (DIAS_ENVIADOS_HOY.size === 0 || !DIAS_ENVIADOS_HOY.has(hoy)) {
         DIAS_ENVIADOS_HOY.clear();
         DIAS_ENVIADOS_HOY.add(hoy);
+        enviadosHoy = 0;
         return true;
     }
+    if (enviadosHoy >= MAX_ENVIOS_POR_DIA) return false;
     return true;
 }
+function contarEnvio() { enviadosHoy++; }
 
 async function guardarMensaje(tel, rol, contenido) {
     try {
@@ -1256,7 +1277,7 @@ async function startBot() {
         auth: state,
         logger: pino({ level: 'silent' }),
         printQRInTerminal: false,
-        browser: ["ONE4CARS MASTER", "Chrome", "1.0.0"]
+        browser: getBrowser()
     });
 
     socketBot = sock;
@@ -1282,8 +1303,24 @@ async function startBot() {
             }
         }
         if (connection === 'close') {
-            const r = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (r) setTimeout(() => startBot(), 5000);
+            const statusCode = (lastDisconnect?.error instanceof Boom)?.output?.statusCode;
+            const errorMsg = lastDisconnect?.error?.message || '';
+            const esLoggedOut = statusCode === DisconnectReason.loggedOut;
+            const esBadSession = errorMsg.includes('Bad MAC') || errorMsg.includes('Unsupported state') || errorMsg.includes('unable to authenticate');
+            if (esBadSession) {
+                console.log("[BOT] Sesión corrupta, limpiando auth_info y generando nuevo QR...");
+                try {
+                    const authDir = path.join(process.cwd(), 'auth_info');
+                    if (fs.existsSync(authDir)) {
+                        fs.rmSync(authDir, { recursive: true, force: true });
+                    }
+                } catch (e) {}
+                qrCodeData = "Iniciando...";
+            }
+            if (!esLoggedOut) {
+                const delay = esBadSession ? 10000 : 5000;
+                setTimeout(() => startBot(), delay);
+            }
         }
     });
 
