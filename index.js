@@ -1626,8 +1626,19 @@ async function startBot() {
 
             // --- 3. LÓGICA DE PAGOS ---
             if (text === 'pago fact' || text === 'abono'  || text.includes('pago') || text.includes('al señor oscar') || text.includes('envié el pago') || text.includes('adjunto pago')) {
-                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
-                const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nRecibido tu mensaje, administración validará su pago a la brevedad.\n\n${MENU_TEXT}`;
+                let nombreCliente = vendedor ? vendedor.nombre : null;
+                if (!nombreCliente) {
+                    const cliente = await buscarClientePorTelefono(from.split('@')[0]);
+                    if (cliente) nombreCliente = cliente.nombres;
+                }
+                if (!nombreCliente) nombreCliente = pushName;
+                const saludoCordial = `¡Hola *${nombreCliente}*! Gracias por su mensaje. 😊
+
+Hemos recibido su notificación de pago, administración lo validará a la brevedad.
+
+Mientras tanto, puede consultar el detalle de sus facturas pendientes aquí:
+
+2️⃣ *Estado de cuenta:* https://www.one4cars.com/estado_de_cuenta.php/`;
                 return await safeSendMessage(from, { text: saludoCordial });
             }
 
