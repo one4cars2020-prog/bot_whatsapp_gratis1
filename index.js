@@ -139,6 +139,7 @@ const pendientesConfirmacion = new Map();
 const carritoCompras = new Map();
 const agendaVisitas = new Map();
 const pendingProductSelection = new Map();
+const multiItemOrders = new Map();
 
 const VISIT_KEYWORDS = [
     'me visite', 'me visiten', 'me visita', 'pase por', 'pasar por',
@@ -849,6 +850,96 @@ async function buscarProductoPorTexto(texto) {
     return null;
 }
 
+// ===== MULTI-ITEM ORDER FUNCTIONS =====
+
+function parseMultiItemMessage(rawText) {
+    if (!rawText || rawText.length < 10 || rawText.length > 1000) return null;
+    let text = rawText.replace(/\s+y\s+/gi, ',').trim();
+    const items = [];
+    const parts = text.split(/(?=\b\d{1,4}\s+[a-zA-ZáéíóúñüÁÉÍÓÚÑÜ])/);
+    for (const part of parts) {
+        const m = part.match(/^\s*(\d{1,4})\s+(.+)/);
+        if (m) {
+            let desc = m[2].trim().replace(/[,\s]+$/g, '').replace(/\s+y\s*$/i, '').trim();
+            if (desc.length > 2) {
+                items.push({ cantidad: parseInt(m[1]), descripcion: desc });
+            }
+        }
+    }
+    const txtNormal = normalizar(rawText);
+    const tieneKeyword = PRODUCT_KEYWORDS.some(kw => txtNormal.includes(kw));
+    return items.length >= 2 && tieneKeyword ? items : null;
+}
+
+async function processMultiItemProduct(from, item, multiOrder) {
+    const pct = await obtenerPorcentaje();
+    multiOrder.pct = pct;
+    const prods = await buscarProductoPorTexto(item.descripcion);
+    if (!prods || prods.length === 0) {
+        multiOrder.resolvedItems.push({ descripcion: item.descripcion, cantidad: item.cantidad, error: true, producto: null });
+        multiOrder.currentIndex++;
+        await processNextMultiItem(from, multiOrder);
+        return;
+    }
+    if (prods.length === 1) {
+        const p = prods[0];
+        const precio = parseFloat(p.precio_minimo || 0) / pct;
+        multiOrder.resolvedItems.push({ descripcion: item.descripcion, cantidad: item.cantidad, codigo: p.producto, tipo: p.tipo, precio: precio, producto: p, error: false });
+        multiOrder.currentIndex++;
+        await processNextMultiItem(from, multiOrder);
+        return;
+    }
+    let msg = `🔍 *Producto ${multiOrder.currentIndex + 1} de ${multiOrder.items.length}:* "${item.descripcion}"\n(Cantidad: ${item.cantidad})\n\n`;
+    prods.slice(0, 8).forEach((p, i) => {
+        const precio = parseFloat(p.precio_minimo || 0) / pct;
+        msg += `*${i+1}.* ${p.producto} — *$${precio.toFixed(2)}*\n   ${p.descripcion.substring(0, 60)}${p.descripcion.length > 60 ? '...' : ''}\n`;
+    });
+    msg += `\n📌 Responde el *número* del producto para este ítem.\n_O responde 0 para omitir_`;
+    pendingProductSelection.set(from, { productos: prods.slice(0, 8), pct, multiItem: true });
+    await safeSendMessage(from, { text: msg });
+}
+
+async function processNextMultiItem(from, multiOrder) {
+    if (multiOrder.currentIndex >= multiOrder.items.length) {
+        await showMultiItemQuotation(from, multiOrder);
+        return;
+    }
+    const item = multiOrder.items[multiOrder.currentIndex];
+    await processMultiItemProduct(from, item, multiOrder);
+}
+
+async function showMultiItemQuotation(from, multiOrder) {
+    const okItems = multiOrder.resolvedItems.filter(it => !it.error);
+    const errorItems = multiOrder.resolvedItems.filter(it => it.error);
+    if (okItems.length === 0) {
+        await safeSendMessage(from, { text: "❌ No se pudo identificar ningún producto de tu pedido. Intenta con descripciones más detalladas." });
+        multiItemOrders.delete(from);
+        return;
+    }
+    let gt = 0;
+    let msg = `📋 *COTIZACIÓN*\n`;
+    if (multiOrder.vendedor) msg += `👤 Vendedor: *${multiOrder.vendedor.nombre}*\n\n`;
+    msg += `💰 *Precios pagaderos a tasa BCV*\n\n`;
+    okItems.forEach(it => {
+        const t = it.precio * it.cantidad;
+        gt += t;
+        msg += `*${it.codigo}* - ${it.tipo || ''}\n   ${it.cantidad} und x $${it.precio.toFixed(2)} = *$${t.toFixed(2)}*\n\n`;
+    });
+    msg += `\n*TOTAL GENERAL: $${gt.toFixed(2)}*`;
+    if (errorItems.length > 0) {
+        msg += `\n\n⚠️ Productos no encontrados:\n`;
+        errorItems.forEach(it => { msg += `❌ "${it.descripcion}" (${it.cantidad} und)\n`; });
+    }
+    await safeSendMessage(from, { text: msg });
+    const dataConfirm = { items: okItems, vendedor: multiOrder.vendedor || null, pushName: multiOrder.pushName };
+    pendientesConfirmacion.set(from, dataConfirm);
+    await setSesionDatos(from, { tipo: 'confirmando', items: dataConfirm.items, vendedor: dataConfirm.vendedor, pushName: dataConfirm.pushName });
+    await setModo(from, 'confirmando');
+    await sleep(500);
+    await safeSendMessage(from, { text: `✅ *¿Desea confirmar este pedido?*\n\nResponda *SI* para confirmar o *NO* para cancelar.` });
+    multiItemOrders.delete(from);
+}
+
 async function obtenerDetalleFacturas(id_cliente, id_vendedor = null) {
     let query = `
         SELECT f.id_factura, f.nro_factura, f.total, f.abono_factura, f.fecha_reg, f.porcentaje, f.descuento, f.total_desc,
@@ -1401,6 +1492,28 @@ async function startBot() {
             const pendingSel = pendingProductSelection.get(from);
             if (pendingSel && /^\d{1,2}$/.test(text)) {
                 const idx = parseInt(text) - 1;
+                // Multi-item selection handling
+                if (pendingSel.multiItem) {
+                    const multiOrder = multiItemOrders.get(from);
+                    if (multiOrder) {
+                        if (idx >= 0 && idx < pendingSel.productos.length) {
+                            const p = pendingSel.productos[idx];
+                            const pct = pendingSel.pct;
+                            pendingProductSelection.delete(from);
+                            const precio = parseFloat(p.precio_minimo || 0) / pct;
+                            multiOrder.resolvedItems.push({ descripcion: multiOrder.items[multiOrder.currentIndex].descripcion, cantidad: multiOrder.items[multiOrder.currentIndex].cantidad, codigo: p.producto, tipo: p.tipo, precio: precio, error: false });
+                            multiOrder.currentIndex++;
+                            await processNextMultiItem(from, multiOrder);
+                        } else {
+                            pendingProductSelection.delete(from);
+                            multiOrder.resolvedItems.push({ descripcion: multiOrder.items[multiOrder.currentIndex].descripcion, cantidad: multiOrder.items[multiOrder.currentIndex].cantidad, error: true });
+                            multiOrder.currentIndex++;
+                            await processNextMultiItem(from, multiOrder);
+                        }
+                        return;
+                    }
+                }
+                // Original single-product selection
                 if (idx >= 0 && idx < pendingSel.productos.length) {
                     const p = pendingSel.productos[idx];
                     const pct = pendingSel.pct;
@@ -1418,6 +1531,21 @@ async function startBot() {
                     } catch (imgErr) {
                         await safeSendMessage(from, { text: caption });
                     }
+                    return;
+                }
+            }
+            
+            // --- 1c. REMINDER/CANCEL FOR PENDING MULTI-ITEM ---
+            if (multiItemOrders.has(from)) {
+                if (text === 'cancelar') {
+                    multiItemOrders.delete(from);
+                    const psel = pendingProductSelection.get(from);
+                    if (psel && psel.multiItem) pendingProductSelection.delete(from);
+                    await safeSendMessage(from, { text: "❌ Pedido cancelado." });
+                    return;
+                }
+                if (!/^\d{1,2}$/.test(text)) {
+                    await safeSendMessage(from, { text: "⚠️ Tienes un pedido pendiente. Responde el *número* del producto, o escribe *cancelar*." });
                     return;
                 }
             }
@@ -1782,6 +1910,17 @@ async function startBot() {
             const autoReplyFrasi = ['gracias por comunicarte', 'mensaje automático', 'auto-reply', 'automatic reply', 'soy un bot', 'soy el asistente', 'comunicarte con', 'en breve te atenderemo'];
             const esAutoReply = autoReplyFrasi.some(f => rawText.toLowerCase().includes(f));
             if (!esAutoReply && text !== 'menu' && !['hola', 'buen dia', 'buenos dias'].includes(text)) {
+                // Multi-item detection
+                if (!multiItemOrders.has(from)) {
+                    const multiItems = parseMultiItemMessage(rawText);
+                    if (multiItems) {
+                        console.log(`[MULTI] Pedido de ${multiItems.length} items de ${from}`);
+                        const multiOrder = { items: multiItems, currentIndex: 0, resolvedItems: [], pct: null, vendedor: vendedor, pushName: pushName };
+                        multiItemOrders.set(from, multiOrder);
+                        await processNextMultiItem(from, multiOrder);
+                        return;
+                    }
+                }
                 try {
                     const palabrasEnMensaje = rawText.split(/\s+/);
                     const txtNormal = normalizar(rawText);
