@@ -1625,21 +1625,33 @@ async function startBot() {
             }
 
             // --- 3. LÓGICA DE PAGOS ---
-            if (text === 'pago fact' || text === 'abono'  || text.includes('pago') || text.includes('al señor oscar') || text.includes('envié el pago') || text.includes('adjunto pago')) {
-                let nombreCliente = vendedor ? vendedor.nombre : null;
-                if (!nombreCliente) {
-                    const cliente = await buscarClientePorTelefono(from.split('@')[0]);
-                    if (cliente) nombreCliente = cliente.nombres;
-                }
-                if (!nombreCliente) nombreCliente = pushName;
-                const saludoCordial = `¡Hola *${nombreCliente}*! Gracias por su mensaje. 😊
+            const MEDIOS_PAGO_KEYWORDS = ['envieme la cuenta', 'envíeme la cuenta', 'envieme el pago movil', 'envíeme el pago móvil', 'cual es su cuenta', 'cuál es su cuenta', 'cual es su pago movil', 'cuál es su pago móvil', 'numero de cuenta', 'número de cuenta', 'pago movil', 'pago móvil', 'medios de pago', 'cuenta para pagar', 'como puedo pagar', 'cómo puedo pagar', 'datos bancarios', 'datos de pago'];
+            const PAGAR_KEYWORDS = ['como hago para pagar', 'cómo hago para pagar', 'quiero pagar', 'envieme el vendedor por el pago', 'envíeme el vendedor por el pago', 'aca tengo el dinero', 'acá tengo el dinero', 'pago fact', 'abono', 'al señor oscar', 'envié el pago', 'adjunto pago'];
+            const esMediosPago = MEDIOS_PAGO_KEYWORDS.some(k => rawText.toLowerCase().includes(k) || text.includes(k));
+            const esPagarAhora = PAGAR_KEYWORDS.some(k => rawText.toLowerCase().includes(k) || text.includes(k)) || (text.includes('pago') && !esMediosPago);
+            let nombreCliente = vendedor ? vendedor.nombre : null;
+            if (!nombreCliente) {
+                const cliente = await buscarClientePorTelefono(from.split('@')[0]);
+                if (cliente) nombreCliente = cliente.nombres;
+            }
+            if (!nombreCliente) nombreCliente = pushName;
+            if (esMediosPago) {
+                const msg = `¡Hola *${nombreCliente}*! 😊
+
+Aquí tiene nuestros datos de pago:
+
+1️⃣ *Medios de pago:* https://www.one4cars.com/medios_de_pago.php/`;
+                return await safeSendMessage(from, { text: msg });
+            }
+            if (esPagarAhora) {
+                const msg = `¡Hola *${nombreCliente}*! 😊
 
 Hemos recibido su notificación de pago, administración lo validará a la brevedad.
 
 Mientras tanto, puede consultar el detalle de sus facturas pendientes aquí:
 
 2️⃣ *Estado de cuenta:* https://www.one4cars.com/estado_de_cuenta.php/`;
-                return await safeSendMessage(from, { text: saludoCordial });
+                return await safeSendMessage(from, { text: msg });
             }
 
             if (text === 'factura fiscal'  || text.includes('factura con iva')  ) {
