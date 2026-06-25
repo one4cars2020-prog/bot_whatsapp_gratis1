@@ -799,7 +799,7 @@ async function buscarProductoPorTexto(texto) {
     });
 
     try {
-        const sql = `SELECT producto, descripcion, tipo, precio_minimo, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando FROM tab_productos WHERE ${whereClause} LIMIT 8`;
+        const sql = `SELECT producto, descripcion, tipo, precio_minimo, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando FROM tab_productos WHERE activo = 'si' AND (COALESCE(cantidad_existencia,0) + COALESCE(cantidad_existencia_almacen,0) > 0 OR COALESCE(cantidad_fabricando,0) > 0) AND (${whereClause}) LIMIT 8`;
         const [rows] = await pool.execute(sql, queryParams);
         if (rows.length > 0) return rows;
     } catch (e) {
@@ -826,7 +826,7 @@ async function buscarProductoPorTexto(texto) {
         const sqlRelevancia = `
             SELECT producto, descripcion, tipo, precio_minimo, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando
             FROM tab_productos 
-            WHERE ${orConditions.join(" OR ")} 
+            WHERE activo = 'si' AND (COALESCE(cantidad_existencia,0) + COALESCE(cantidad_existencia_almacen,0) > 0 OR COALESCE(cantidad_fabricando,0) > 0) AND (${orConditions.join(" OR ")})
             HAVING (${relevanceSQL}) >= ? 
             ORDER BY ${relevanceSQL} DESC 
             LIMIT 8`;
@@ -839,7 +839,7 @@ async function buscarProductoPorTexto(texto) {
 
     if (minRelevance > 1 && palabrasBase.length > 1) {
         try {
-            const sqlCatchall = `SELECT producto, descripcion, tipo, precio_minimo, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando FROM tab_productos WHERE ${orConditions.join(" OR ")} HAVING (${relevanceSQL}) >= 1 ORDER BY ${relevanceSQL} DESC LIMIT 8`;
+            const sqlCatchall = `SELECT producto, descripcion, tipo, precio_minimo, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando FROM tab_productos WHERE activo = 'si' AND (COALESCE(cantidad_existencia,0) + COALESCE(cantidad_existencia_almacen,0) > 0 OR COALESCE(cantidad_fabricando,0) > 0) AND (${orConditions.join(" OR ")}) HAVING (${relevanceSQL}) >= 1 ORDER BY ${relevanceSQL} DESC LIMIT 8`;
             const [rows] = await pool.execute(sqlCatchall, [...orParams]);
             if (rows.length > 0) return rows;
         } catch (e) {
@@ -892,7 +892,9 @@ async function processMultiItemProduct(from, item, multiOrder) {
     let msg = `🔍 *Producto ${multiOrder.currentIndex + 1} de ${multiOrder.items.length}:* "${item.descripcion}"\n(Cantidad: ${item.cantidad})\n\n`;
     prods.slice(0, 8).forEach((p, i) => {
         const precio = parseFloat(p.precio_minimo || 0) / pct;
-        msg += `*${i+1}.* ${p.producto} — *$${precio.toFixed(2)}*\n   ${p.descripcion.substring(0, 60)}${p.descripcion.length > 60 ? '...' : ''}\n`;
+        const stock = parseFloat(p.stock_total || 0);
+        let estado = stock > 0 ? "✅" : (parseFloat(p.cantidad_fabricando || 0) > 0 ? "🚚" : "❌");
+        msg += `*${i+1}.* ${p.producto} — *$${precio.toFixed(2)}* ${estado}\n   ${p.descripcion.substring(0, 55)}${p.descripcion.length > 55 ? '...' : ''}\n`;
     });
     msg += `\n📌 Responde el *número* del producto para este ítem.\n_O responde 0 para omitir_`;
     pendingProductSelection.set(from, { productos: prods.slice(0, 8), pct, multiItem: true });
@@ -1522,7 +1524,7 @@ async function startBot() {
                     let infoStock = "";
                     if (parseFloat(p.stock_total || 0) <= 0) {
                         const fab = parseFloat(p.cantidad_fabricando || 0);
-                        infoStock = fab > 0 ? "\n🏭 *EN FÁBRICA (Próximo a llegar)*" : "\n❌ *Sin existencia, solo información*";
+                        infoStock = fab > 0 ? "\n🚚 *Sin existencia, en tránsito desde fábrica*" : "";
                     } else { infoStock = "\n✅ *Disponible*"; }
                     const caption = `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio: $${precio.toFixed(2)} (Pagadero a tasa BCV)*${infoStock}\n📝 ${p.descripcion}\n🔗 Ficha: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}`;
                     const imgUrl = `https://one4cars.com/imagen/${p.producto}.jpg`;
@@ -1981,9 +1983,9 @@ async function startBot() {
                             if (parseFloat(p.stock_total || 0) <= 0) {
                                 const fab = parseFloat(p.cantidad_fabricando || 0);
                                 if (fab > 0) {
-                                    infoStock = "\n🏭 *EN FÁBRICA (Próximo a llegar)*";
+                                    infoStock = "\n🚚 *Sin existencia, en tránsito desde fábrica*";
                                 } else {
-                                    infoStock = "\n❌ *Sin existencia, solo información*";
+                                    infoStock = "";
                                 }
                             } else {
                                 infoStock = "\n✅ *Disponible*";
