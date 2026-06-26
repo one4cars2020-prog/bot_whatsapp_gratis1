@@ -1568,6 +1568,7 @@ async function startBot() {
             }
 
             // --- 2. DETECCIÓN INTELIGENTE DEL MENÚ ---
+            // --- 2. DETECCIÓN INTELIGENTE DEL MENÚ ---
             const menuOption = detectarIntencionMenu(text);
             if (menuOption) {
                 if (menuOption.includes('Estado de cuenta')) {
@@ -1588,7 +1589,7 @@ async function startBot() {
                     listado += `💰 *TOTAL A PAGAR: $${totalP.toFixed(2)}*`;
                     return await safeSendMessage(from, { text: listado });
                 }
-                if (menuOption.includes('Asesor Humano') && detectarVisita(rawText, text)) {
+                else if (menuOption.includes('Asesor Humano') && detectarVisita(rawText, text)) {
                     let infoCliente = { nombres: pushName, celular: from.split('@')[0] };
                     if (sesion?.id_cliente_int) {
                         const c = await pool.execute("SELECT * FROM tab_clientes WHERE id_cliente = ?", [sesion.id_cliente_int]);
@@ -1617,7 +1618,7 @@ async function startBot() {
                     const respExtendida = `${menuOption}\n\n📅 *Nota:* Hemos detectado que solicitas una visita. La hemos agendado automáticamente para que un operador te contacte pronto.`;
                     return await safeSendMessage(from, { text: respExtendida });
                 }
-                if (menuOption === 'VISITAS_HOY') {
+                else if (menuOption === 'VISITAS_HOY') {
                     const hoyStr = new Date().toISOString().split('T')[0];
                     try {
                         const [vis] = await pool.execute("SELECT a.id_agenda, a.hora, c.nombres, c.celular, c.zona, c.direccion FROM tab_agenda_visitas a JOIN tab_clientes c ON a.id_cliente = c.id_cliente WHERE a.fecha = ? AND (a.estado IN ('pendiente','no_contesto','ausente','pospuso') OR a.estado IS NULL) ORDER BY c.zona, c.nombres", [hoyStr]);
@@ -1633,12 +1634,16 @@ async function startBot() {
                         return await safeSendMessage(from, { text: reporte });
                     } catch (e) {
                         console.log("[VISITAS HOY] Error:", e.message);
-                        return await safeSendMessage(from, { text: "❌ Error al obtener el reporte de visitas." });
+                        return await safeSendMessage(from, { text: "❌ Error generando reporte de visitas." });
                     }
                 }
-                return await safeSendMessage(from, { text: menuOption });
+                // --- INICIO DE CORRECCIÓN ---
+                else {
+                    // Esto maneja todas las demás opciones (1, 3, 4, 5, 6, 7, 8) que no se estaban enviando.
+                    return await safeSendMessage(from, { text: menuOption });
+                }
+                // --- FIN DE CORRECCIÓN ---
             }
-
             // --- 3. LÓGICA DE PAGOS ---
             if (text === 'pago fact' || text === 'abono'  || text.includes('pago') || text.includes('al señor oscar') || text.includes('envié el pago') || text.includes('adjunto pago')) {
                 const nombreUsuario = vendedor ? vendedor.nombre : pushName;
