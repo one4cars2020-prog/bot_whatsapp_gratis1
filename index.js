@@ -1451,7 +1451,9 @@ async function startBot() {
                     await safeSendMessage(from, { text: "🤖 Bot reactivado para este chat." });
                     return;
                 }
-                if (!isAdmin) {
+                // Solo procesar fromMe si es auto-chat (admin hablando consigo mismo = con el bot)
+                const botOwnJid = socketBot?.user?.id?.split(':')[0] + '@s.whatsapp.net';
+                if (from !== botOwnJid) {
                     return;
                 }
             }
@@ -1527,6 +1529,19 @@ async function startBot() {
                         'noche': `¡Buenas noches, *${nombreUsuario}*! Dios le bendiga. Que descanse. 🌙\n\n¿En qué podemos ayudarle? Quedamos a la orden.\n\n${MENU_TEXT}`
                     };
                     await safeSendMessage(from, { text: respuestas[saludoBase] });
+                }
+
+                // Guardar nombre del cliente si fue extraído del saludo
+                if (nombreExtraido && !nombreAlmacenado) {
+                    let datosActuales = {};
+                    try { if (sesion?.datos) datosActuales = JSON.parse(sesion.datos); } catch(e) {}
+                    if (!datosActuales.nombre_cliente) {
+                        datosActuales.nombre_cliente = nombreExtraido;
+                        await pool.execute(
+                            "INSERT INTO control_chat (telefono, datos, modo) VALUES (?, ?, 'bot') ON DUPLICATE KEY UPDATE datos = ?",
+                            [from, JSON.stringify(datosActuales), JSON.stringify(datosActuales)]
+                        );
+                    }
                 }
                 return;
             }
@@ -2130,72 +2145,18 @@ Mientras tanto, puede consultar el detalle de sus facturas pendientes aquí:
                 return await safeSendMessage(from, { text: msg });
             }
 
-            // --- 7. MENÚ (fallback) ---
-            if (text === 'menu' || text.startsWith('menu ')) {
-                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
-                return await safeSendMessage(from, { text: `¡Hola *${nombreUsuario}*! Es un gusto saludarle. 🙌\n\n¿En qué podemos ayudarle hoy? Indíquenos qué servicio necesita o consulte nuestro menú:\n\n${MENU_TEXT}` });
-            }
-            const nombreUsuario = nombreAlmacenado || nombreExtraido || (vendedor ? vendedor.nombre : null) || pushName || "Usuario";
-
-            if (nombreExtraido && !nombreAlmacenado) {
-                let datosActuales = {};
-                try { if (sesion?.datos) datosActuales = JSON.parse(sesion.datos); } catch(e) {}
-                if (!datosActuales.nombre_cliente) {
-                    datosActuales.nombre_cliente = nombreExtraido;
-                    await pool.execute(
-                        "INSERT INTO control_chat (telefono, datos, modo) VALUES (?, ?, 'bot') ON DUPLICATE KEY UPDATE datos = ?",
-                        [from, JSON.stringify(datosActuales), JSON.stringify(datosActuales)]
-                    );
-                }
-            }
-
-            const esSaludoFallback = text === 'menu' || text.startsWith('menu ') ||
-                                       text === 'hola' || text.startsWith('hola ') || text.startsWith('hola,') ||
-                                       text === 'saludo' || text.startsWith('saludo ') ||
-                                       text === 'saludos' || text.startsWith('saludos ') ||
-                                       text === 'buen dia' || text.startsWith('buen dia ') ||
-                                       text === 'buenos dias' || text.startsWith('buenos dias ') ||
-                                       text === 'buenas tardes' || text.startsWith('buenas tardes ') ||
-                                       text === 'buenas noches' || text.startsWith('buenas noches ') ||
-                                       text === 'buenas' || text.startsWith('buenas ') ||
-                                       text === 'que tal' || text.startsWith('que tal ') ||
-                                       text === 'qué tal' || text.startsWith('qué tal ');
-            if (esSaludoFallback) {
-                const mencionaJuan = text.includes('juan');
-                const mencionaJose = text.includes('jos');
-                const saludoBase = text.startsWith('buenas tardes') ? 'tarde' :
-                                   text.startsWith('buenas noches') ? 'noche' :
-                                   text.startsWith('buen') ? 'dia' : 'dia';
-
-                if (text.startsWith('menu')) {
-                    return await safeSendMessage(from, { text: `¡Hola *${nombreUsuario}*! Es un gusto saludarle. 🙌\n\n¿En qué podemos ayudarle hoy? Indíquenos qué servicio necesita o consulte nuestro menú:\n\n${MENU_TEXT}` });
-                } else if (mencionaJuan) {
-                    return await safeSendMessage(from, { text: `¡Buen${saludoBase === 'dia' ? 'os' : 'as'} ${saludoBase}, *${nombreUsuario}*! 🙌\n\n*Juan* no está disponible en este momento, pero yo puedo atenderle con todo gusto. Somos el mismo equipo ONE4CARS y estamos para servirle.\n\n¿En qué podemos ayudarle?\n\n${MENU_TEXT}` });
-                } else if (mencionaJose) {
-                    return await safeSendMessage(from, { text: `¡Buen${saludoBase === 'dia' ? 'os' : 'as'} ${saludoBase}, *${nombreUsuario}*! 🙌\n\n*José* no está disponible en este momento, pero yo puedo atenderle con todo gusto. Somos el mismo equipo ONE4CARS y estamos para servirle.\n\n¿En qué podemos ayudarle?\n\n${MENU_TEXT}` });
-                } else {
-                    const respuestas = {
-                        'dia': `¡Buenos días, *${nombreUsuario}*! Dios le bendiga. Es un gusto tenerle por aquí. 🙏\n\n¿En qué podemos servirle el día de hoy? Aquí le ayudamos con mucho gusto.\n\n${MENU_TEXT}`,
-                        'tarde': `¡Buenas tardes, *${nombreUsuario}*! Un placer saludarle. Que tenga una bendecida tarde. 😊\n\n¿Cómo podemos ayudarle? Quedamos atentos a su solicitud.\n\n${MENU_TEXT}`,
-                        'noche': `¡Buenas noches, *${nombreUsuario}*! Dios le bendiga. Que descanse. 🌙\n\n¿En qué podemos ayudarle? Quedamos a la orden.\n\n${MENU_TEXT}`
-                    };
-                    return await safeSendMessage(from, { text: respuestas[saludoBase] });
-                }
-            }
-            
             // --- 8. AGRADECIMIENTO ---
             const gratitudeWords = ['gracias', 'agradecid', 'agardecid', 'agradecimient'];
             if (gratitudeWords.some(w => text.includes(w))) {
-                const nombreAgradecimiento = nombreAlmacenado || nombreExtraido || (vendedor ? vendedor.nombre : null) || pushName || "Usuario";
-                const respuestas = [
-                    `¡Ha sido un placer atenderle, *${nombreAgradecimiento}*! Que Dios le bendiga y quede muy pendiente cualquier cosita que necesite. Aquí estamos para servirle. 🙏`,
-                    `Un honor poder ayudarle, *${nombreAgradecimiento}*. Que tenga un excelente día y cualquier cosita no dude en escribirnos. ¡Estamos a la orden! 🙌`,
-                    `Con mucho gusto, *${nombreAgradecimiento}*, para eso estamos. Que Dios le bendiga grandemente y quede muy pendiente. ¡Aquí tiene su casa! 🏠`,
-                    `Gracias a usted, *${nombreAgradecimiento}*, por su confianza. Es un privilegio poder atenderle. Que pase un bendecido día. 😊🙏`,
-                    `¡De nada, *${nombreAgradecimiento}*! Con todo el gusto del mundo. Recuerde que estamos para servirle en lo que necesite. ¡Dios le bendiga! 🌟`
+                const nombre = nombreAlmacenado || nombreExtraido || (vendedor ? vendedor.nombre : null) || pushName || "Usuario";
+                const respGrat = [
+                    `¡Ha sido un placer atenderle, *${nombre}*! Que Dios le bendiga y quede muy pendiente cualquier cosita que necesite. Aquí estamos para servirle. 🙏`,
+                    `Un honor poder ayudarle, *${nombre}*. Que tenga un excelente día y cualquier cosita no dude en escribirnos. ¡Estamos a la orden! 🙌`,
+                    `Con mucho gusto, *${nombre}*, para eso estamos. Que Dios le bendiga grandemente y quede muy pendiente. ¡Aquí tiene su casa! 🏠`,
+                    `Gracias a usted, *${nombre}*, por su confianza. Es un privilegio poder atenderle. Que pase un bendecido día. 😊🙏`,
+                    `¡De nada, *${nombre}*! Con todo el gusto del mundo. Recuerde que estamos para servirle en lo que necesite. ¡Dios le bendiga! 🌟`
                 ];
-                const respuesta = respuestas[Math.floor(Math.random() * respuestas.length)];
-                return await safeSendMessage(from, { text: respuesta });
+                return await safeSendMessage(from, { text: respGrat[Math.floor(Math.random() * respGrat.length)] });
             }
 
             // --- 9. FALLBACK (respuesta para mensajes no reconocidos) ---
@@ -2203,11 +2164,11 @@ Mientras tanto, puede consultar el detalle de sus facturas pendientes aquí:
             if (conversationalShorts.includes(text)) return; 
             if (rawText.length > 500) return;
 
-            const nombreFallback = nombreAlmacenado || nombreExtraido || (vendedor ? vendedor.nombre : null) || pushName || "Usuario";
+            const nombreFb = nombreAlmacenado || nombreExtraido || (vendedor ? vendedor.nombre : null) || pushName || "Usuario";
             const fallbacks = [
-                `Disculpa, *${nombreFallback}*, no logré entender tu consulta. Por favor elige una opción del menú para poder ayudarte mejor. 🙏\n\n${MENU_TEXT}`,
-                `Hola *${nombreFallback}*, no pude procesar tu mensaje. ¿Podrías indicarme qué necesitas usando las opciones del menú? 😊\n\n${MENU_TEXT}`,
-                `*${nombreFallback}*, no tengo una respuesta para eso. Te invito a usar nuestro menú para que puedas consultar lo que necesites. 👇\n\n${MENU_TEXT}`
+                `Disculpa, *${nombreFb}*, no logré entender tu consulta. Por favor elige una opción del menú para poder ayudarte mejor. 🙏\n\n${MENU_TEXT}`,
+                `Hola *${nombreFb}*, no pude procesar tu mensaje. ¿Podrías indicarme qué necesitas usando las opciones del menú? 😊\n\n${MENU_TEXT}`,
+                `*${nombreFb}*, no tengo una respuesta para eso. Te invito a usar nuestro menú para que puedas consultar lo que necesites. 👇\n\n${MENU_TEXT}`
             ];
             return await safeSendMessage(from, { text: fallbacks[Math.floor(Math.random() * fallbacks.length)] });
         } catch (e) { console.log("[MSG] Error en handler de mensajes:", e.message); }
