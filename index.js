@@ -9,11 +9,25 @@ const mysql = require('mysql2/promise');
 const axios = require('axios');
 
 // CAPTURA GLOBAL DE ERRORES EVITA QUE EL BOT MUERA
+let badMacCount = 0;
 process.on('unhandledRejection', (err) => {
-    const msg = err?.message || err;
-    console.log("[UNHANDLED] Error no capturado:", msg);
+    const msg = err?.message || err || '';
+    console.log("[UNHANDLED] Error no capturado:", typeof msg === 'string' ? msg.substring(0,200) : msg);
     if (msg === "Connection Closed" && socketBot) {
         setTimeout(() => startBot(), 3000);
+    }
+    if (typeof msg === 'string' && (msg.includes('Bad MAC') || msg.includes('verifyMAC') || msg.includes('Session error'))) {
+        badMacCount++;
+        console.log(`[UNHANDLED] Bad MAC detectado (#${badMacCount})`);
+        if (badMacCount > 5) {
+            console.log("[UNHANDLED] Demasiados Bad MAC, forzando limpieza...");
+            badMacCount = 0;
+            try {
+                const authDir = path.join(process.cwd(), 'auth_info');
+                if (fs.existsSync(authDir)) fs.rmSync(authDir, { recursive: true, force: true });
+            } catch (e) {}
+            if (socketBot) setTimeout(() => startBot(), 5000);
+        }
     }
 });
 process.on('uncaughtException', (err) => {
@@ -139,6 +153,8 @@ const pendientesConfirmacion = new Map();
 const carritoCompras = new Map();
 const agendaVisitas = new Map();
 const pendingProductSelection = new Map();
+const pendingMultiItemOrder = new Map(); // from -> { items: [{qty, desc, prods}], results: [], idx: number }
+const adminHumanChats = new Map(); // from -> timestamp: evita que el bot responda cuando el admin está conversando
 
 const VISIT_KEYWORDS = [
     'me visite', 'me visiten', 'me visita', 'pase por', 'pasar por',
@@ -1300,6 +1316,14 @@ async function startBot() {
                 setInterval(() => {
                     if (!isBotReady() && socketBot) startBot();
                 }, 300000);
+                // Reconexión proactiva cada 6h para renovar sesión sin perder QR
+                setInterval(() => {
+                    console.log("[RECONNECT] Reconexión programada 6h finalizada. Renovando conexión...");
+                    if (socketBot) {
+                        socketBot.end(undefined);
+                        setTimeout(() => startBot(), 3000);
+                    }
+                }, 6 * 60 * 60 * 1000);
             }
         }
         if (connection === 'close') {
@@ -1343,6 +1367,8 @@ async function startBot() {
                     await safeSendMessage(from, { text: "🤖 Bot reactivado para este chat." });
                 } else {
                     await setModo(from, 'humano');
+                    adminHumanChats.set(from, Date.now());
+                    console.log(`[fromMe] Admin envió mensaje a ${from.split('@')[0]} → modo humano + in-memory`);
                 }
                 return;
             }
@@ -1358,11 +1384,68 @@ async function startBot() {
 
             await guardarMensaje(from, 'user', rawText);
             const sesion = await getSesion(from);
+            // Verificar si el admin está conversando con este cliente (in-memory: última interacción < 10 min)
+            const adminLastTalk = adminHumanChats.get(from);
+            const adminRecentlyActive = adminLastTalk && (Date.now() - adminLastTalk) < 10 * 60 * 1000;
             if (sesion && sesion.modo === 'humano' && !isAdmin) {
                 if (sesion.updated_at && (Date.now() - new Date(sesion.updated_at).getTime()) > REACTIVAR_BOT_MS) {
                     await setModo(from, 'bot');
                     console.log(`[AUTO-REACT] ${from.split('@')[0]} reactivado tras ${REACTIVAR_BOT_MS/3600000}h sin actividad humana.`);
                 } else {
+                    console.log(`[HUMANO] Silencio para ${from.split('@')[0]} (modo DB)`);
+                    return;
+                }
+            }
+            // --- FALLBACK IN-MEMORY HUMANO ---
+            if (adminRecentlyActive) {
+                console.log(`[HUMANO-MEM] Silencio para ${from.split('@')[0]} (admin activo hace ${((Date.now()-adminLastTalk)/1000).toFixed(0)}s)`);
+                return;
+            }
+
+            // --- COMANDOS DE ADMIN ---
+            if (isAdmin && rawText.startsWith('!')) {
+                const cmdParts = rawText.slice(1).split(/\s+/);
+                const cmd = cmdParts[0].toLowerCase();
+                const target = cmdParts[1];
+
+                if (cmd === 'reconnect') {
+                    console.log("[CMD] Admin forzó reconexión...");
+                    await safeSendMessage(from, { text: "🔄 Reiniciando conexión WhatsApp..." });
+                    setTimeout(() => {
+                        try {
+                            if (fs.existsSync(path.join(process.cwd(), 'auth_info'))) {
+                                fs.rmSync(path.join(process.cwd(), 'auth_info'), { recursive: true, force: true });
+                            }
+                            if (socketBot) socketBot.end(undefined);
+                            setTimeout(() => startBot(), 3000);
+                        } catch (e) { console.log("[CMD] Error en reconnect:", e.message); }
+                    }, 1000);
+                    return;
+                }
+
+                if ((cmd === 'mute' || cmd === 'pause') && target) {
+                    const targetJid = formatWhatsApp(target);
+                    if (targetJid) {
+                        await setModo(targetJid, 'humano');
+                        adminHumanChats.set(targetJid, Date.now());
+                        await safeSendMessage(from, { text: `🔇 Bot silenciado para *${target}* por 2h. Para reactivar usa *!unmute ${target}*` });
+                        console.log(`[CMD] Admin silenció ${target}`);
+                    } else {
+                        await safeSendMessage(from, { text: `❌ Número inválido: ${target}` });
+                    }
+                    return;
+                }
+
+                if ((cmd === 'unmute' || cmd === 'resume') && target) {
+                    const targetJid = formatWhatsApp(target);
+                    if (targetJid) {
+                        await setModo(targetJid, 'bot');
+                        adminHumanChats.delete(targetJid);
+                        await safeSendMessage(from, { text: `🔊 Bot reactivado para *${target}*` });
+                        console.log(`[CMD] Admin reactivó ${target}`);
+                    } else {
+                        await safeSendMessage(from, { text: `❌ Número inválido: ${target}` });
+                    }
                     return;
                 }
             }
@@ -1417,6 +1500,57 @@ async function startBot() {
                         await socketBot.sendMessage(from, { image: { url: imgUrl }, caption: caption });
                     } catch (imgErr) {
                         await safeSendMessage(from, { text: caption });
+                    }
+                    // Verificar si hay más líneas pendientes en un pedido multi-item
+                    const multiOrder = pendingMultiItemOrder.get(from);
+                    if (multiOrder && multiOrder.items.length > 0) {
+                        const sigLinea = multiOrder.items.shift();
+                        pendingMultiItemOrder.set(from, multiOrder);
+                        // Procesar la siguiente línea automáticamente
+                        try {
+                            const sigQty = (sigLinea.match(/^\s*(\d{1,4})\s+(.+)/) || [])[1];
+                            const sigDesc = (sigLinea.match(/^\s*(\d{1,4})\s+(.+)/) || [])[2] || sigLinea;
+                            const sigProds = await buscarProductoPorTexto(sigDesc);
+                            if (sigProds && sigProds.length > 1) {
+                                const msg = `🔍 *${sigProds.length} productos encontrados para:* "${sigDesc}"\n`;
+                                let m = msg;
+                                sigProds.slice(0, 8).forEach((sp, si) => {
+                                    const spPrecio = parseFloat(sp.precio_minimo || 0) / pct;
+                                    m += `\n*${si+1}.* ${sp.producto} — *$${spPrecio.toFixed(2)}*\n   ${sp.descripcion.substring(0, 60)}${sp.descripcion.length > 60 ? '...' : ''}`;
+                                });
+                                if (multiOrder.items.length > 0) m += `\n\n🛒 *${multiOrder.items.length} línea(s) más* pendiente(s).`;
+                                m += `\n\n📌 Responde el *número* del producto que necesitas.`;
+                                pendingProductSelection.set(from, { productos: sigProds.slice(0, 8), pct, multiItem: true });
+                                await safeSendMessage(from, { text: m });
+                            } else if (sigProds && sigProds.length === 1) {
+                                const sp = sigProds[0];
+                                const spPrecio = parseFloat(sp.precio_minimo || 0) / pct;
+                                const spInfo = parseFloat(sp.stock_total || 0) <= 0 ? (parseFloat(sp.cantidad_fabricando || 0) > 0 ? "\n🏭 *EN FÁBRICA (Próximo a llegar)*" : "\n❌ *Sin existencia, solo información*") : "\n✅ *Disponible*";
+                                const spCaption = `📦 *CÓDIGO: ${sp.producto}*\n💰 *Precio: $${spPrecio.toFixed(2)} (Pagadero a tasa BCV)*${spInfo}\n📝 ${sp.descripcion}\n🔗 Ficha: https://one4cars.com/producto_general.php?cod=${sp.producto}&tipo=${encodeURIComponent(sp.tipo)}`;
+                                const spImg = `https://one4cars.com/imagen/${sp.producto}.jpg`;
+                                try { await socketBot.sendMessage(from, { image: { url: spImg }, caption: spCaption }); } catch (e) { await safeSendMessage(from, { text: spCaption }); }
+                                if (multiOrder.items.length > 0) {
+                                    // Más líneas, procesar la siguiente en el próximo mensaje
+                                    pendingProductSelection.set(from, { productos: [], pct, multiItem: true, waitingNext: true });
+                                    await safeSendMessage(from, { text: `✅ Producto mostrado. Quedan *${multiOrder.items.length} línea(s)*. Envíame el número del siguiente producto o escribe "siguiente" para continuar.` });
+                                } else {
+                                    pendingMultiItemOrder.delete(from);
+                                    await safeSendMessage(from, { text: `✅ *Pedido completado.* Revisa los productos mostrados arriba.` });
+                                }
+                            } else {
+                                await safeSendMessage(from, { text: `❌ No encontré "${sigDesc}". ${multiOrder.items.length > 0 ? 'Pasando al siguiente...' : ''}` });
+                                if (multiOrder.items.length > 0) {
+                                    // Re-intentar con la siguiente línea - pero para evitar loops, mostramos mensaje
+                                    pendingProductSelection.set(from, { productos: [], pct, multiItem: true, waitingNext: true });
+                                    await safeSendMessage(from, { text: `Quedan *${multiOrder.items.length} línea(s)*. Escribe "siguiente" para continuar.` });
+                                } else {
+                                    pendingMultiItemOrder.delete(from);
+                                }
+                            }
+                        } catch (e) {
+                            console.log("[MULTI-ITEM] Error procesando siguiente línea:", e.message);
+                            pendingMultiItemOrder.delete(from);
+                        }
                     }
                     return;
                 }
@@ -1822,8 +1956,16 @@ async function startBot() {
                                 const precio = parseFloat(p.precio_minimo || 0) / pct;
                                 msg += `\n*${i+1}.* ${p.producto} — *$${precio.toFixed(2)}*\n   ${p.descripcion.substring(0, 60)}${p.descripcion.length > 60 ? '...' : ''}`;
                             });
+                            // Verificar si hay más líneas en el mensaje original (pedido multi-item)
+                            const lineasResto = rawText.split('\n').filter(l => l.trim());
+                            const idxActual = lineasResto.findIndex(l => l.trim() === rawText.trim());
+                            const lineasPendientes = idxActual >= 0 ? lineasResto.slice(idxActual + 1) : [];
+                            if (lineasPendientes.length > 0) {
+                                msg += `\n\n🛒 *${lineasPendientes.length} línea(s) más* pendiente(s) de procesar.`;
+                                pendingMultiItemOrder.set(from, { items: lineasPendientes, results: [{ qty: cantidadPedido, producto: null, pendiente: true }], idx: 0 });
+                            }
                             msg += `\n\n📌 Responde el *número* del producto que necesitas.`;
-                            pendingProductSelection.set(from, { productos: prods.slice(0, 8), pct });
+                            pendingProductSelection.set(from, { productos: prods.slice(0, 8), pct, multiItem: lineasPendientes.length > 0 });
                             return await safeSendMessage(from, { text: msg });
                         }
                     }
@@ -2016,11 +2158,38 @@ const server = http.createServer(async (req, res) => {
         });
     } else if (routename === '/reset-sesion') {
         try {
+            // También limpia el estado Bad MAC forzando reinicio completo
             if (fs.existsSync('auth_info')) {
                 fs.rmSync('auth_info', { recursive: true, force: true });
             }
-            res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Sesión borrada</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="5;url=/"> </head><body class="bg-light"><div class="container mt-5 text-center"><div class="card shadow p-5 mx-auto" style="max-width:500px;border-radius:15px;"><h3>✅ Sesión borrada</h3><p class="mt-3">La carpeta <strong>auth_info</strong> se eliminó correctamente.</p><p>El bot mostrará un nuevo código QR en <strong>5 segundos</strong>.</p><a href="/" class="btn btn-primary mt-3">Ir al inicio</a></div></div></body></html>`);
+            if (socketBot) {
+                socketBot.end(undefined);
+                setTimeout(() => startBot(), 2000);
+            }
+            res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Sesión borrada</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="5;url=/"> </head><body class="bg-light"><div class="container mt-5 text-center"><div class="card shadow p-5 mx-auto" style="max-width:500px;border-radius:15px;"><h3>✅ Sesión borrada</h3><p class="mt-3">La carpeta <strong>auth_info</strong> se eliminó correctamente.</p><p>El bot se reconectará en <strong>2 segundos</strong>.</p><a href="/" class="btn btn-primary mt-3">Ir al inicio</a></div></div></body></html>`);
         } catch (e) { res.end("Error al borrar sesión: " + e.message); }
+    } else if (routename === '/admin/mute') {
+        const phone = query.telefono || '';
+        if (!phone) { res.writeHead(400); return res.end("Falta ?telefono="); }
+        const jid = formatWhatsApp(phone);
+        if (jid) {
+            await setModo(jid, 'humano');
+            adminHumanChats.set(jid, Date.now());
+            console.log(`[WEB-MUTE] Admin silenció ${phone} → modo humano`);
+        }
+        res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
+        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Cliente silenciado</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="3;url=/"></head><body class="bg-light"><div class="container mt-5 text-center"><div class="card shadow p-5 mx-auto" style="max-width:500px;border-radius:15px;"><h3>🔇 Cliente silenciado</h3><p class="mt-3">El bot no responderá a <strong>${phone}</strong> durante las próximas 2 horas.</p><a href="/" class="btn btn-primary mt-3">Volver</a></div></div></body></html>`);
+    } else if (routename === '/admin/unmute') {
+        const phone = query.telefono || '';
+        if (!phone) { res.writeHead(400); return res.end("Falta ?telefono="); }
+        const jid = formatWhatsApp(phone);
+        if (jid) {
+            await setModo(jid, 'bot');
+            adminHumanChats.delete(jid);
+            console.log(`[WEB-UNMUTE] Admin reactivó ${phone} → modo bot`);
+        }
+        res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
+        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Cliente reactivado</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="3;url=/"></head><body class="bg-light"><div class="container mt-5 text-center"><div class="card shadow p-5 mx-auto" style="max-width:500px;border-radius:15px;"><h3>🔊 Cliente reactivado</h3><p class="mt-3">El bot volverá a responder a <strong>${phone}</strong> automáticamente.</p><a href="/" class="btn btn-primary mt-3">Volver</a></div></div></body></html>`);
     } else if (routename === '/notificador-estado') {
 
         const filtroVendedorNotif = query.vendedor || '';
