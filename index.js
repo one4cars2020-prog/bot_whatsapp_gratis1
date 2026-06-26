@@ -13,7 +13,7 @@ process.on('unhandledRejection', (err) => {
     const msg = err?.message || err;
     console.log("[UNHANDLED] Error no capturado:", msg);
     if (msg === "Connection Closed" && socketBot) {
-        setTimeout(() => startBot(), 10000);
+        setTimeout(() => startBot(), 3000);
     }
 });
 process.on('uncaughtException', (err) => {
@@ -249,6 +249,21 @@ function normalizar(texto) {
         .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?!]/g, "") 
         .toLowerCase()
         .trim();
+}
+
+function extraerNombreDeSaludo(rawText) {
+    if (!rawText || rawText.trim().length < 3) return null;
+    const t = rawText.trim();
+    const m = t.match(/^(?:hola|saludos?|buenos?\s*(?:dias|día|tardes|noches)?|buenas|que tal|qué tal)\s+([A-Za-zÁÉÍÓÚáéíóúñÑüÜ]+(?:\s+[A-Za-zÁÉÍÓÚáéíóúñÑüÜ]+)?)/i);
+    if (m) {
+        let name = m[1].trim();
+        name = name.replace(/\s+(?:como|disculpa|disculpe|permiso|una|quisiera|necesito|queria|quería|te|le|les|me|puedes|podrias|podrías).*/i, '').trim();
+        name = name.replace(/[.,!?;:]+$/, '').trim();
+        if (name.length >= 2 && !/^\d+$/.test(name) && !['yo','tu','el','ella','ellos','nosotros','vosotros','esto','eso','aqui','alli','señor','señora','don','doña'].includes(name.toLowerCase())) {
+            return name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+        }
+    }
+    return null;
 }
 
 function limpiarRIF(texto) {
@@ -1460,6 +1475,45 @@ async function startBot() {
                 }
             }
 
+            // --- 0. BIENVENIDA PRIMERA VEZ + SALUDO ---
+            if (!sesion) {
+                await guardarUsuario(from, pushName, 0);
+                const msg = `🎉 *¡Bienvenido a ONE4CARS, ${pushName}!* 🎉\n\nSomos *Juan* y *José*, sus asesores de confianza en autopartes. Estamos aquí para ayudarlo con todo lo que necesite, desde filtros y frenos hasta piezas especializadas.\n\n¿En qué podemos servirle el día de hoy?\n\n${MENU_TEXT}`;
+                await safeSendMessage(from, { text: msg });
+                return;
+            }
+
+            const esSaludo = text === 'menu' || text.startsWith('menu ') ||
+                             text === 'hola' || text.startsWith('hola ') || text.startsWith('hola,') ||
+                             text === 'buen dia' || text.startsWith('buen dia ') ||
+                             text === 'buenos dias' || text.startsWith('buenos dias ') ||
+                             text === 'buenas tardes' || text.startsWith('buenas tardes ') ||
+                             text === 'buenas noches' || text.startsWith('buenas noches ');
+
+            if (esSaludo) {
+                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
+                const mencionaJuan = text.includes('juan');
+                const mencionaJose = text.includes('jos');
+                const saludoBase = text.startsWith('buenas tardes') ? 'tarde' :
+                                   text.startsWith('buenas noches') ? 'noche' : 'dia';
+
+                if (text.startsWith('menu')) {
+                    await safeSendMessage(from, { text: `¡Hola *${nombreUsuario}*! Es un gusto saludarle. 🙌\n\n¿En qué podemos ayudarle hoy? Indíquenos qué servicio necesita o consulte nuestro menú:\n\n${MENU_TEXT}` });
+                } else if (mencionaJuan) {
+                    await safeSendMessage(from, { text: `¡Buen${saludoBase === 'dia' ? 'os' : 'as'} ${saludoBase}, *${nombreUsuario}*! 🙌\n\n*Juan* no está disponible en este momento, pero yo puedo atenderle con todo gusto. Somos el mismo equipo ONE4CARS y estamos para servirle.\n\n¿En qué podemos ayudarle?\n\n${MENU_TEXT}` });
+                } else if (mencionaJose) {
+                    await safeSendMessage(from, { text: `¡Buen${saludoBase === 'dia' ? 'os' : 'as'} ${saludoBase}, *${nombreUsuario}*! 🙌\n\n*José* no está disponible en este momento, pero yo puedo atenderle con todo gusto. Somos el mismo equipo ONE4CARS y estamos para servirle.\n\n¿En qué podemos ayudarle?\n\n${MENU_TEXT}` });
+                } else {
+                    const respuestas = {
+                        'dia': `¡Buenos días, *${nombreUsuario}*! Dios le bendiga. Es un gusto tenerle por aquí. 🙏\n\n¿En qué podemos servirle el día de hoy? Aquí le ayudamos con mucho gusto.\n\n${MENU_TEXT}`,
+                        'tarde': `¡Buenas tardes, *${nombreUsuario}*! Un placer saludarle. Que tenga una bendecida tarde. 😊\n\n¿Cómo podemos ayudarle? Quedamos atentos a su solicitud.\n\n${MENU_TEXT}`,
+                        'noche': `¡Buenas noches, *${nombreUsuario}*! Dios le bendiga. Que descanse. 🌙\n\n¿En qué podemos ayudarle? Quedamos a la orden.\n\n${MENU_TEXT}`
+                    };
+                    await safeSendMessage(from, { text: respuestas[saludoBase] });
+                }
+                return;
+            }
+
             // --- 1. LÓGICA DE RIF (ADMINISTRADORES) ---
             if (esRIFPuro) {
                 if (isAdmin) {
@@ -1934,7 +1988,7 @@ Mientras tanto, puede consultar el detalle de sus facturas pendientes aquí:
             // --- 5. LÓGICA DE PRODUCTOS MEJORADA ---
             const autoReplyFrasi = ['gracias por comunicarte', 'mensaje automático', 'auto-reply', 'automatic reply', 'soy un bot', 'soy el asistente', 'comunicarte con', 'en breve te atenderemo'];
             const esAutoReply = autoReplyFrasi.some(f => rawText.toLowerCase().includes(f));
-            if (!esAutoReply && text !== 'menu' && !['hola', 'buen dia', 'buenos dias'].includes(text)) {
+            if (!esAutoReply && !text.startsWith('menu') && !text.startsWith('hola') && !text.startsWith('buen')) {
                 // Multi-item detection
                 if (!multiItemOrders.has(from)) {
                     const multiItems = parseMultiItemMessage(rawText);
@@ -2059,39 +2113,69 @@ Mientras tanto, puede consultar el detalle de sus facturas pendientes aquí:
                 return await safeSendMessage(from, { text: msg });
             }
 
-            // --- 7. SALUDO Y MENÚ ---
-            const nombreUsuario = vendedor ? vendedor.nombre : pushName;
-            const esSaludo = text === 'menu' || text.startsWith('menu ') ||
-                             text === 'hola' || text.startsWith('hola ') || text.startsWith('hola,') ||
-                             text.startsWith('buen dia ') || text === 'buen dia' ||
-                             text.startsWith('buenos dias ') || text === 'buenos dias' ||
-                             text.startsWith('buenas tardes ') || text === 'buenas tardes' ||
-                             text.startsWith('buenas noches ') || text === 'buenas noches';
-            if (esSaludo) {
+            // --- 7. MENÚ (fallback) ---
+            if (text === 'menu' || text.startsWith('menu ')) {
+                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
+                return await safeSendMessage(from, { text: `¡Hola *${nombreUsuario}*! Es un gusto saludarle. 🙌\n\n¿En qué podemos ayudarle hoy? Indíquenos qué servicio necesita o consulte nuestro menú:\n\n${MENU_TEXT}` });
+            }
+            const nombreUsuario = nombreAlmacenado || nombreExtraido || (vendedor ? vendedor.nombre : null) || pushName || "Usuario";
+
+            if (nombreExtraido && !nombreAlmacenado) {
+                let datosActuales = {};
+                try { if (sesion?.datos) datosActuales = JSON.parse(sesion.datos); } catch(e) {}
+                if (!datosActuales.nombre_cliente) {
+                    datosActuales.nombre_cliente = nombreExtraido;
+                    await pool.execute(
+                        "INSERT INTO control_chat (telefono, datos, modo) VALUES (?, ?, 'bot') ON DUPLICATE KEY UPDATE datos = ?",
+                        [from, JSON.stringify(datosActuales), JSON.stringify(datosActuales)]
+                    );
+                }
+            }
+
+            const esSaludoFallback = text === 'menu' || text.startsWith('menu ') ||
+                                       text === 'hola' || text.startsWith('hola ') || text.startsWith('hola,') ||
+                                       text === 'saludo' || text.startsWith('saludo ') ||
+                                       text === 'saludos' || text.startsWith('saludos ') ||
+                                       text === 'buen dia' || text.startsWith('buen dia ') ||
+                                       text === 'buenos dias' || text.startsWith('buenos dias ') ||
+                                       text === 'buenas tardes' || text.startsWith('buenas tardes ') ||
+                                       text === 'buenas noches' || text.startsWith('buenas noches ') ||
+                                       text === 'buenas' || text.startsWith('buenas ') ||
+                                       text === 'que tal' || text.startsWith('que tal ') ||
+                                       text === 'qué tal' || text.startsWith('qué tal ');
+            if (esSaludoFallback) {
+                const mencionaJuan = text.includes('juan');
+                const mencionaJose = text.includes('jos');
                 const saludoBase = text.startsWith('buenas tardes') ? 'tarde' :
                                    text.startsWith('buenas noches') ? 'noche' :
                                    text.startsWith('buen') ? 'dia' : 'dia';
-                const respuestas = {
-                    'dia': `¡Buenos días, *${nombreUsuario}*! Dios le bendiga. Es un gusto tenerle por aquí. 🙏\n\n¿En qué podemos servirle el día de hoy? Aquí le ayudamos con mucho gusto.\n\n${MENU_TEXT}`,
-                    'tarde': `¡Buenas tardes, *${nombreUsuario}*! Un placer saludarle. Que tenga una bendecida tarde. 😊\n\n¿Cómo podemos ayudarle? Quedamos atentos a su solicitud.\n\n${MENU_TEXT}`,
-                    'noche': `¡Buenas noches, *${nombreUsuario}*! Dios le bendiga. Que descanse. 🌙\n\n¿En qué podemos ayudarle? Quedamos a la orden.\n\n${MENU_TEXT}`
-                };
+
                 if (text.startsWith('menu')) {
                     return await safeSendMessage(from, { text: `¡Hola *${nombreUsuario}*! Es un gusto saludarle. 🙌\n\n¿En qué podemos ayudarle hoy? Indíquenos qué servicio necesita o consulte nuestro menú:\n\n${MENU_TEXT}` });
+                } else if (mencionaJuan) {
+                    return await safeSendMessage(from, { text: `¡Buen${saludoBase === 'dia' ? 'os' : 'as'} ${saludoBase}, *${nombreUsuario}*! 🙌\n\n*Juan* no está disponible en este momento, pero yo puedo atenderle con todo gusto. Somos el mismo equipo ONE4CARS y estamos para servirle.\n\n¿En qué podemos ayudarle?\n\n${MENU_TEXT}` });
+                } else if (mencionaJose) {
+                    return await safeSendMessage(from, { text: `¡Buen${saludoBase === 'dia' ? 'os' : 'as'} ${saludoBase}, *${nombreUsuario}*! 🙌\n\n*José* no está disponible en este momento, pero yo puedo atenderle con todo gusto. Somos el mismo equipo ONE4CARS y estamos para servirle.\n\n¿En qué podemos ayudarle?\n\n${MENU_TEXT}` });
+                } else {
+                    const respuestas = {
+                        'dia': `¡Buenos días, *${nombreUsuario}*! Dios le bendiga. Es un gusto tenerle por aquí. 🙏\n\n¿En qué podemos servirle el día de hoy? Aquí le ayudamos con mucho gusto.\n\n${MENU_TEXT}`,
+                        'tarde': `¡Buenas tardes, *${nombreUsuario}*! Un placer saludarle. Que tenga una bendecida tarde. 😊\n\n¿Cómo podemos ayudarle? Quedamos atentos a su solicitud.\n\n${MENU_TEXT}`,
+                        'noche': `¡Buenas noches, *${nombreUsuario}*! Dios le bendiga. Que descanse. 🌙\n\n¿En qué podemos ayudarle? Quedamos a la orden.\n\n${MENU_TEXT}`
+                    };
+                    return await safeSendMessage(from, { text: respuestas[saludoBase] });
                 }
-                return await safeSendMessage(from, { text: respuestas[saludoBase] });
             }
             
             // --- 8. AGRADECIMIENTO ---
             const gratitudeWords = ['gracias', 'agradecid', 'agardecid', 'agradecimient'];
             if (gratitudeWords.some(w => text.includes(w))) {
-                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
+                const nombreAgradecimiento = nombreAlmacenado || nombreExtraido || (vendedor ? vendedor.nombre : null) || pushName || "Usuario";
                 const respuestas = [
-                    `¡Ha sido un placer atenderle, *${nombreUsuario}*! Que Dios le bendiga y quede muy pendiente cualquier cosita que necesite. Aquí estamos para servirle. 🙏`,
-                    `Un honor poder ayudarle, *${nombreUsuario}*. Que tenga un excelente día y cualquier cosita no dude en escribirnos. ¡Estamos a la orden! 🙌`,
-                    `Con mucho gusto, *${nombreUsuario}*, para eso estamos. Que Dios le bendiga grandemente y quede muy pendiente. ¡Aquí tiene su casa! 🏠`,
-                    `Gracias a usted, *${nombreUsuario}*, por su confianza. Es un privilegio poder atenderle. Que pase un bendecido día. 😊🙏`,
-                    `¡De nada, *${nombreUsuario}*! Con todo el gusto del mundo. Recuerde que estamos para servirle en lo que necesite. ¡Dios le bendiga! 🌟`
+                    `¡Ha sido un placer atenderle, *${nombreAgradecimiento}*! Que Dios le bendiga y quede muy pendiente cualquier cosita que necesite. Aquí estamos para servirle. 🙏`,
+                    `Un honor poder ayudarle, *${nombreAgradecimiento}*. Que tenga un excelente día y cualquier cosita no dude en escribirnos. ¡Estamos a la orden! 🙌`,
+                    `Con mucho gusto, *${nombreAgradecimiento}*, para eso estamos. Que Dios le bendiga grandemente y quede muy pendiente. ¡Aquí tiene su casa! 🏠`,
+                    `Gracias a usted, *${nombreAgradecimiento}*, por su confianza. Es un privilegio poder atenderle. Que pase un bendecido día. 😊🙏`,
+                    `¡De nada, *${nombreAgradecimiento}*! Con todo el gusto del mundo. Recuerde que estamos para servirle en lo que necesite. ¡Dios le bendiga! 🌟`
                 ];
                 const respuesta = respuestas[Math.floor(Math.random() * respuestas.length)];
                 return await safeSendMessage(from, { text: respuesta });
