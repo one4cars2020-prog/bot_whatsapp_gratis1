@@ -9,36 +9,11 @@ const mysql = require('mysql2/promise');
 const axios = require('axios');
 
 // CAPTURA GLOBAL DE ERRORES EVITA QUE EL BOT MUERA
-let badMacCount = 0;
 process.on('unhandledRejection', (err) => {
-    // Convertimos el error a texto plano para asegurar que la lectura no falle
-    const msg = String(err?.message || err || '');
-    console.log("[UNHANDLED] Error no capturado:", msg.substring(0,200));
-    
-    if (msg.includes("Connection Closed") && socketBot) {
+    const msg = err?.message || err;
+    console.log("[UNHANDLED] Error no capturado:", msg);
+    if (msg === "Connection Closed" && socketBot) {
         setTimeout(() => startBot(), 3000);
-    }
-    
-    // Detección agresiva del error criptográfico que tienes en tu log
-    if (msg.includes('Bad MAC') || msg.includes('verifyMAC') || msg.includes('Session error') || msg.includes('Failed to decrypt')) {
-        badMacCount++;
-        console.log(`[UNHANDLED] Desincronización de llaves detectada (#${badMacCount})`);
-        
-        // Reducimos el límite a 2 para que limpie la sesión rápido en lugar de quedarse colgado
-        if (badMacCount >= 2) {
-            console.log("[UNHANDLED] Llaves corruptas, forzando limpieza de auth_info...");
-            badMacCount = 0;
-            try {
-                const authDir = path.join(process.cwd(), 'auth_info');
-                if (fs.existsSync(authDir)) fs.rmSync(authDir, { recursive: true, force: true });
-            } catch (e) {
-                console.log("Error borrando auth_info:", e.message);
-            }
-            if (socketBot) {
-                try { socketBot.end(undefined); } catch(e){}
-                setTimeout(() => startBot(), 5000);
-            }
-        }
     }
 });
 process.on('uncaughtException', (err) => {
@@ -164,8 +139,7 @@ const pendientesConfirmacion = new Map();
 const carritoCompras = new Map();
 const agendaVisitas = new Map();
 const pendingProductSelection = new Map();
-const pendingMultiItemOrder = new Map(); // from -> { items: [{qty, desc, prods}], results: [], idx: number }
-const adminHumanChats = new Map(); // from -> timestamp: evita que el bot responda cuando el admin está conversando
+const multiItemOrders = new Map();
 
 const VISIT_KEYWORDS = [
     'me visite', 'me visiten', 'me visita', 'pase por', 'pasar por',
@@ -275,6 +249,21 @@ function normalizar(texto) {
         .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?!]/g, "") 
         .toLowerCase()
         .trim();
+}
+
+function extraerNombreDeSaludo(rawText) {
+    if (!rawText || rawText.trim().length < 3) return null;
+    const t = rawText.trim();
+    const m = t.match(/^(?:hola|saludos?|buenos?\s*(?:dias|día|tardes|noches)?|buenas|que tal|qué tal)\s+([A-Za-zÁÉÍÓÚáéíóúñÑüÜ]+(?:\s+[A-Za-zÁÉÍÓÚáéíóúñÑüÜ]+)?)/i);
+    if (m) {
+        let name = m[1].trim();
+        name = name.replace(/\s+(?:como|disculpa|disculpe|permiso|una|quisiera|necesito|queria|quería|te|le|les|me|puedes|podrias|podrías).*/i, '').trim();
+        name = name.replace(/[.,!?;:]+$/, '').trim();
+        if (name.length >= 2 && !/^\d+$/.test(name) && !['yo','tu','el','ella','ellos','nosotros','vosotros','esto','eso','aqui','alli','señor','señora','don','doña'].includes(name.toLowerCase())) {
+            return name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+        }
+    }
+    return null;
 }
 
 function limpiarRIF(texto) {
@@ -825,7 +814,7 @@ async function buscarProductoPorTexto(texto) {
     });
 
     try {
-        const sql = `SELECT producto, descripcion, tipo, precio_minimo, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando FROM tab_productos WHERE ${whereClause} LIMIT 8`;
+        const sql = `SELECT producto, descripcion, tipo, precio_minimo, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando FROM tab_productos WHERE activo = 'si' AND (COALESCE(cantidad_existencia,0) + COALESCE(cantidad_existencia_almacen,0) > 0 OR COALESCE(cantidad_fabricando,0) > 0) AND (${whereClause}) LIMIT 8`;
         const [rows] = await pool.execute(sql, queryParams);
         if (rows.length > 0) return rows;
     } catch (e) {
@@ -852,7 +841,7 @@ async function buscarProductoPorTexto(texto) {
         const sqlRelevancia = `
             SELECT producto, descripcion, tipo, precio_minimo, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando
             FROM tab_productos 
-            WHERE ${orConditions.join(" OR ")} 
+            WHERE activo = 'si' AND (COALESCE(cantidad_existencia,0) + COALESCE(cantidad_existencia_almacen,0) > 0 OR COALESCE(cantidad_fabricando,0) > 0) AND (${orConditions.join(" OR ")})
             HAVING (${relevanceSQL}) >= ? 
             ORDER BY ${relevanceSQL} DESC 
             LIMIT 8`;
@@ -865,7 +854,7 @@ async function buscarProductoPorTexto(texto) {
 
     if (minRelevance > 1 && palabrasBase.length > 1) {
         try {
-            const sqlCatchall = `SELECT producto, descripcion, tipo, precio_minimo, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando FROM tab_productos WHERE ${orConditions.join(" OR ")} HAVING (${relevanceSQL}) >= 1 ORDER BY ${relevanceSQL} DESC LIMIT 8`;
+            const sqlCatchall = `SELECT producto, descripcion, tipo, precio_minimo, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando FROM tab_productos WHERE activo = 'si' AND (COALESCE(cantidad_existencia,0) + COALESCE(cantidad_existencia_almacen,0) > 0 OR COALESCE(cantidad_fabricando,0) > 0) AND (${orConditions.join(" OR ")}) HAVING (${relevanceSQL}) >= 1 ORDER BY ${relevanceSQL} DESC LIMIT 8`;
             const [rows] = await pool.execute(sqlCatchall, [...orParams]);
             if (rows.length > 0) return rows;
         } catch (e) {
@@ -874,6 +863,98 @@ async function buscarProductoPorTexto(texto) {
     }
 
     return null;
+}
+
+// ===== MULTI-ITEM ORDER FUNCTIONS =====
+
+function parseMultiItemMessage(rawText) {
+    if (!rawText || rawText.length < 10 || rawText.length > 1000) return null;
+    let text = rawText.replace(/\s+y\s+/gi, ',').trim();
+    const items = [];
+    const parts = text.split(/(?=\b\d{1,4}\s+[a-zA-ZáéíóúñüÁÉÍÓÚÑÜ])/);
+    for (const part of parts) {
+        const m = part.match(/^\s*(\d{1,4})\s+(.+)/);
+        if (m) {
+            let desc = m[2].trim().replace(/[,\s]+$/g, '').replace(/\s+y\s*$/i, '').trim();
+            if (desc.length > 2) {
+                items.push({ cantidad: parseInt(m[1]), descripcion: desc });
+            }
+        }
+    }
+    const txtNormal = normalizar(rawText);
+    const tieneKeyword = PRODUCT_KEYWORDS.some(kw => txtNormal.includes(kw));
+    return items.length >= 2 && tieneKeyword ? items : null;
+}
+
+async function processMultiItemProduct(from, item, multiOrder) {
+    const pct = await obtenerPorcentaje();
+    multiOrder.pct = pct;
+    const prods = await buscarProductoPorTexto(item.descripcion);
+    if (!prods || prods.length === 0) {
+        multiOrder.resolvedItems.push({ descripcion: item.descripcion, cantidad: item.cantidad, error: true, producto: null });
+        multiOrder.currentIndex++;
+        await processNextMultiItem(from, multiOrder);
+        return;
+    }
+    if (prods.length === 1) {
+        const p = prods[0];
+        const precio = parseFloat(p.precio_minimo || 0) / pct;
+        multiOrder.resolvedItems.push({ descripcion: item.descripcion, cantidad: item.cantidad, codigo: p.producto, tipo: p.tipo, precio: precio, producto: p, error: false });
+        multiOrder.currentIndex++;
+        await processNextMultiItem(from, multiOrder);
+        return;
+    }
+    let msg = `🔍 *Producto ${multiOrder.currentIndex + 1} de ${multiOrder.items.length}:* "${item.descripcion}"\n(Cantidad: ${item.cantidad})\n\n`;
+    prods.slice(0, 8).forEach((p, i) => {
+        const precio = parseFloat(p.precio_minimo || 0) / pct;
+        const stock = parseFloat(p.stock_total || 0);
+        let estado = stock > 0 ? "✅" : (parseFloat(p.cantidad_fabricando || 0) > 0 ? "🚚" : "❌");
+        msg += `*${i+1}.* ${p.producto} — *$${precio.toFixed(2)}* ${estado}\n   ${p.descripcion.substring(0, 55)}${p.descripcion.length > 55 ? '...' : ''}\n`;
+    });
+    msg += `\n📌 Responde el *número* del producto para este ítem.\n_O responde 0 para omitir_`;
+    pendingProductSelection.set(from, { productos: prods.slice(0, 8), pct, multiItem: true });
+    await safeSendMessage(from, { text: msg });
+}
+
+async function processNextMultiItem(from, multiOrder) {
+    if (multiOrder.currentIndex >= multiOrder.items.length) {
+        await showMultiItemQuotation(from, multiOrder);
+        return;
+    }
+    const item = multiOrder.items[multiOrder.currentIndex];
+    await processMultiItemProduct(from, item, multiOrder);
+}
+
+async function showMultiItemQuotation(from, multiOrder) {
+    const okItems = multiOrder.resolvedItems.filter(it => !it.error);
+    const errorItems = multiOrder.resolvedItems.filter(it => it.error);
+    if (okItems.length === 0) {
+        await safeSendMessage(from, { text: "❌ No se pudo identificar ningún producto de tu pedido. Intenta con descripciones más detalladas." });
+        multiItemOrders.delete(from);
+        return;
+    }
+    let gt = 0;
+    let msg = `📋 *COTIZACIÓN*\n`;
+    if (multiOrder.vendedor) msg += `👤 Vendedor: *${multiOrder.vendedor.nombre}*\n\n`;
+    msg += `💰 *Precios pagaderos a tasa BCV*\n\n`;
+    okItems.forEach(it => {
+        const t = it.precio * it.cantidad;
+        gt += t;
+        msg += `*${it.codigo}* - ${it.tipo || ''}\n   ${it.cantidad} und x $${it.precio.toFixed(2)} = *$${t.toFixed(2)}*\n\n`;
+    });
+    msg += `\n*TOTAL GENERAL: $${gt.toFixed(2)}*`;
+    if (errorItems.length > 0) {
+        msg += `\n\n⚠️ Productos no encontrados:\n`;
+        errorItems.forEach(it => { msg += `❌ "${it.descripcion}" (${it.cantidad} und)\n`; });
+    }
+    await safeSendMessage(from, { text: msg });
+    const dataConfirm = { items: okItems, vendedor: multiOrder.vendedor || null, pushName: multiOrder.pushName };
+    pendientesConfirmacion.set(from, dataConfirm);
+    await setSesionDatos(from, { tipo: 'confirmando', items: dataConfirm.items, vendedor: dataConfirm.vendedor, pushName: dataConfirm.pushName });
+    await setModo(from, 'confirmando');
+    await sleep(500);
+    await safeSendMessage(from, { text: `✅ *¿Desea confirmar este pedido?*\n\nResponda *SI* para confirmar o *NO* para cancelar.` });
+    multiItemOrders.delete(from);
 }
 
 async function obtenerDetalleFacturas(id_cliente, id_vendedor = null) {
@@ -1327,14 +1408,6 @@ async function startBot() {
                 setInterval(() => {
                     if (!isBotReady() && socketBot) startBot();
                 }, 300000);
-                // Reconexión proactiva cada 6h para renovar sesión sin perder QR
-                setInterval(() => {
-                    console.log("[RECONNECT] Reconexión programada 6h finalizada. Renovando conexión...");
-                    if (socketBot) {
-                        socketBot.end(undefined);
-                        setTimeout(() => startBot(), 3000);
-                    }
-                }, 6 * 60 * 60 * 1000);
             }
         }
         if (connection === 'close') {
@@ -1376,12 +1449,11 @@ async function startBot() {
                 if (textMe === '!bot') {
                     await setModo(from, 'bot');
                     await safeSendMessage(from, { text: "🤖 Bot reactivado para este chat." });
-                } else {
-                    await setModo(from, 'humano');
-                    adminHumanChats.set(from, Date.now());
-                    console.log(`[fromMe] Admin envió mensaje a ${from.split('@')[0]} → modo humano + in-memory`);
+                    return;
                 }
-                return;
+                if (!isAdmin) {
+                    return;
+                }
             }
 
             const pushName = msg.pushName || "Usuario";
@@ -1389,76 +1461,74 @@ async function startBot() {
             if (!rawText) return;
 
             const text = normalizar(rawText);
+
+            // Extraer nombre del cliente si se presenta (ej: "Hola Juan", "soy Pedro", "me llamo Carlos")
+            let nombreExtraido = null;
+            const nameMatch = rawText.match(/(?:hola|buenas|buen[ao]s?|soy|me llamo|mi nombre es|saludos?)\s+([A-Za-zÁÉÍÓÚáéíóúñÑ]{3,})/i);
+            if (nameMatch) {
+                nombreExtraido = nameMatch[1].charAt(0).toUpperCase() + nameMatch[1].slice(1).toLowerCase();
+            }
             
             const textoLimpioParaRif = rawText.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
             const esRIFPuro = /^[VJGE]\d{8,9}$/.test(textoLimpioParaRif);
 
             await guardarMensaje(from, 'user', rawText);
             const sesion = await getSesion(from);
-            // Verificar si el admin está conversando con este cliente (in-memory: última interacción < 10 min)
-            const adminLastTalk = adminHumanChats.get(from);
-            const adminRecentlyActive = adminLastTalk && (Date.now() - adminLastTalk) < 10 * 60 * 1000;
+            let nombreAlmacenado = null;
+            if (sesion && sesion.datos) {
+                try { const d = JSON.parse(sesion.datos); nombreAlmacenado = d.nombre_cliente || null; } catch(e) {}
+            }
             if (sesion && sesion.modo === 'humano' && !isAdmin) {
                 if (sesion.updated_at && (Date.now() - new Date(sesion.updated_at).getTime()) > REACTIVAR_BOT_MS) {
                     await setModo(from, 'bot');
                     console.log(`[AUTO-REACT] ${from.split('@')[0]} reactivado tras ${REACTIVAR_BOT_MS/3600000}h sin actividad humana.`);
                 } else {
-                    console.log(`[HUMANO] Silencio para ${from.split('@')[0]} (modo DB)`);
                     return;
                 }
             }
-            // --- FALLBACK IN-MEMORY HUMANO ---
-            if (adminRecentlyActive) {
-                console.log(`[HUMANO-MEM] Silencio para ${from.split('@')[0]} (admin activo hace ${((Date.now()-adminLastTalk)/1000).toFixed(0)}s)`);
+
+            // --- 0. BIENVENIDA PRIMERA VEZ + SALUDO ---
+            if (!sesion) {
+                await guardarUsuario(from, pushName, 0);
+                const msg = `🎉 *¡Bienvenido a ONE4CARS, ${pushName}!* 🎉\n\nSomos *Juan* y *José*, sus asesores de confianza en autopartes. Estamos aquí para ayudarlo con todo lo que necesite, desde filtros y frenos hasta piezas especializadas.\n\n¿En qué podemos servirle el día de hoy?\n\n${MENU_TEXT}`;
+                await safeSendMessage(from, { text: msg });
                 return;
             }
 
-            // --- COMANDOS DE ADMIN ---
-            if (isAdmin && rawText.startsWith('!')) {
-                const cmdParts = rawText.slice(1).split(/\s+/);
-                const cmd = cmdParts[0].toLowerCase();
-                const target = cmdParts[1];
+            const esSaludo = text === 'menu' || text.startsWith('menu ') ||
+                             text === 'hola' || text.startsWith('hola ') || text.startsWith('hola,') ||
+                             text === 'saludo' || text.startsWith('saludo ') ||
+                             text === 'saludos' || text.startsWith('saludos ') ||
+                             text === 'buen dia' || text.startsWith('buen dia ') ||
+                             text === 'buenos dias' || text.startsWith('buenos dias ') ||
+                             text === 'buenas tardes' || text.startsWith('buenas tardes ') ||
+                             text === 'buenas noches' || text.startsWith('buenas noches ') ||
+                             text === 'buenas' || text.startsWith('buenas ') ||
+                             text === 'que tal' || text.startsWith('que tal ') ||
+                             text === 'qué tal' || text.startsWith('qué tal ');
 
-                if (cmd === 'reconnect') {
-                    console.log("[CMD] Admin forzó reconexión...");
-                    await safeSendMessage(from, { text: "🔄 Reiniciando conexión WhatsApp..." });
-                    setTimeout(() => {
-                        try {
-                            if (fs.existsSync(path.join(process.cwd(), 'auth_info'))) {
-                                fs.rmSync(path.join(process.cwd(), 'auth_info'), { recursive: true, force: true });
-                            }
-                            if (socketBot) socketBot.end(undefined);
-                            setTimeout(() => startBot(), 3000);
-                        } catch (e) { console.log("[CMD] Error en reconnect:", e.message); }
-                    }, 1000);
-                    return;
-                }
+            if (esSaludo) {
+                const nombreUsuario = nombreAlmacenado || nombreExtraido || (vendedor ? vendedor.nombre : null) || pushName || "Usuario";
+                const mencionaJuan = text.includes('juan');
+                const mencionaJose = text.includes('jos');
+                const saludoBase = text.startsWith('buenas tardes') ? 'tarde' :
+                                   text.startsWith('buenas noches') ? 'noche' : 'dia';
 
-                if ((cmd === 'mute' || cmd === 'pause') && target) {
-                    const targetJid = formatWhatsApp(target);
-                    if (targetJid) {
-                        await setModo(targetJid, 'humano');
-                        adminHumanChats.set(targetJid, Date.now());
-                        await safeSendMessage(from, { text: `🔇 Bot silenciado para *${target}* por 2h. Para reactivar usa *!unmute ${target}*` });
-                        console.log(`[CMD] Admin silenció ${target}`);
-                    } else {
-                        await safeSendMessage(from, { text: `❌ Número inválido: ${target}` });
-                    }
-                    return;
+                if (text.startsWith('menu')) {
+                    await safeSendMessage(from, { text: `¡Hola *${nombreUsuario}*! Es un gusto saludarle. 🙌\n\n¿En qué podemos ayudarle hoy? Indíquenos qué servicio necesita o consulte nuestro menú:\n\n${MENU_TEXT}` });
+                } else if (mencionaJuan) {
+                    await safeSendMessage(from, { text: `¡Buen${saludoBase === 'dia' ? 'os' : 'as'} ${saludoBase}, *${nombreUsuario}*! 🙌\n\n*Juan* no está disponible en este momento, pero yo puedo atenderle con todo gusto. Somos el mismo equipo ONE4CARS y estamos para servirle.\n\n¿En qué podemos ayudarle?\n\n${MENU_TEXT}` });
+                } else if (mencionaJose) {
+                    await safeSendMessage(from, { text: `¡Buen${saludoBase === 'dia' ? 'os' : 'as'} ${saludoBase}, *${nombreUsuario}*! 🙌\n\n*José* no está disponible en este momento, pero yo puedo atenderle con todo gusto. Somos el mismo equipo ONE4CARS y estamos para servirle.\n\n¿En qué podemos ayudarle?\n\n${MENU_TEXT}` });
+                } else {
+                    const respuestas = {
+                        'dia': `¡Buenos días, *${nombreUsuario}*! Dios le bendiga. Es un gusto tenerle por aquí. 🙏\n\n¿En qué podemos servirle el día de hoy? Aquí le ayudamos con mucho gusto.\n\n${MENU_TEXT}`,
+                        'tarde': `¡Buenas tardes, *${nombreUsuario}*! Un placer saludarle. Que tenga una bendecida tarde. 😊\n\n¿Cómo podemos ayudarle? Quedamos atentos a su solicitud.\n\n${MENU_TEXT}`,
+                        'noche': `¡Buenas noches, *${nombreUsuario}*! Dios le bendiga. Que descanse. 🌙\n\n¿En qué podemos ayudarle? Quedamos a la orden.\n\n${MENU_TEXT}`
+                    };
+                    await safeSendMessage(from, { text: respuestas[saludoBase] });
                 }
-
-                if ((cmd === 'unmute' || cmd === 'resume') && target) {
-                    const targetJid = formatWhatsApp(target);
-                    if (targetJid) {
-                        await setModo(targetJid, 'bot');
-                        adminHumanChats.delete(targetJid);
-                        await safeSendMessage(from, { text: `🔊 Bot reactivado para *${target}*` });
-                        console.log(`[CMD] Admin reactivó ${target}`);
-                    } else {
-                        await safeSendMessage(from, { text: `❌ Número inválido: ${target}` });
-                    }
-                    return;
-                }
+                return;
             }
 
             // --- 1. LÓGICA DE RIF (ADMINISTRADORES) ---
@@ -1495,6 +1565,28 @@ async function startBot() {
             const pendingSel = pendingProductSelection.get(from);
             if (pendingSel && /^\d{1,2}$/.test(text)) {
                 const idx = parseInt(text) - 1;
+                // Multi-item selection handling
+                if (pendingSel.multiItem) {
+                    const multiOrder = multiItemOrders.get(from);
+                    if (multiOrder) {
+                        if (idx >= 0 && idx < pendingSel.productos.length) {
+                            const p = pendingSel.productos[idx];
+                            const pct = pendingSel.pct;
+                            pendingProductSelection.delete(from);
+                            const precio = parseFloat(p.precio_minimo || 0) / pct;
+                            multiOrder.resolvedItems.push({ descripcion: multiOrder.items[multiOrder.currentIndex].descripcion, cantidad: multiOrder.items[multiOrder.currentIndex].cantidad, codigo: p.producto, tipo: p.tipo, precio: precio, error: false });
+                            multiOrder.currentIndex++;
+                            await processNextMultiItem(from, multiOrder);
+                        } else {
+                            pendingProductSelection.delete(from);
+                            multiOrder.resolvedItems.push({ descripcion: multiOrder.items[multiOrder.currentIndex].descripcion, cantidad: multiOrder.items[multiOrder.currentIndex].cantidad, error: true });
+                            multiOrder.currentIndex++;
+                            await processNextMultiItem(from, multiOrder);
+                        }
+                        return;
+                    }
+                }
+                // Original single-product selection
                 if (idx >= 0 && idx < pendingSel.productos.length) {
                     const p = pendingSel.productos[idx];
                     const pct = pendingSel.pct;
@@ -1503,7 +1595,7 @@ async function startBot() {
                     let infoStock = "";
                     if (parseFloat(p.stock_total || 0) <= 0) {
                         const fab = parseFloat(p.cantidad_fabricando || 0);
-                        infoStock = fab > 0 ? "\n🏭 *EN FÁBRICA (Próximo a llegar)*" : "\n❌ *Sin existencia, solo información*";
+                        infoStock = fab > 0 ? "\n🚚 *Sin existencia, en tránsito desde fábrica*" : "";
                     } else { infoStock = "\n✅ *Disponible*"; }
                     const caption = `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio: $${precio.toFixed(2)} (Pagadero a tasa BCV)*${infoStock}\n📝 ${p.descripcion}\n🔗 Ficha: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}`;
                     const imgUrl = `https://one4cars.com/imagen/${p.producto}.jpg`;
@@ -1512,62 +1604,25 @@ async function startBot() {
                     } catch (imgErr) {
                         await safeSendMessage(from, { text: caption });
                     }
-                    // Verificar si hay más líneas pendientes en un pedido multi-item
-                    const multiOrder = pendingMultiItemOrder.get(from);
-                    if (multiOrder && multiOrder.items.length > 0) {
-                        const sigLinea = multiOrder.items.shift();
-                        pendingMultiItemOrder.set(from, multiOrder);
-                        // Procesar la siguiente línea automáticamente
-                        try {
-                            const sigQty = (sigLinea.match(/^\s*(\d{1,4})\s+(.+)/) || [])[1];
-                            const sigDesc = (sigLinea.match(/^\s*(\d{1,4})\s+(.+)/) || [])[2] || sigLinea;
-                            const sigProds = await buscarProductoPorTexto(sigDesc);
-                            if (sigProds && sigProds.length > 1) {
-                                const msg = `🔍 *${sigProds.length} productos encontrados para:* "${sigDesc}"\n`;
-                                let m = msg;
-                                sigProds.slice(0, 8).forEach((sp, si) => {
-                                    const spPrecio = parseFloat(sp.precio_minimo || 0) / pct;
-                                    m += `\n*${si+1}.* ${sp.producto} — *$${spPrecio.toFixed(2)}*\n   ${sp.descripcion.substring(0, 60)}${sp.descripcion.length > 60 ? '...' : ''}`;
-                                });
-                                if (multiOrder.items.length > 0) m += `\n\n🛒 *${multiOrder.items.length} línea(s) más* pendiente(s).`;
-                                m += `\n\n📌 Responde el *número* del producto que necesitas.`;
-                                pendingProductSelection.set(from, { productos: sigProds.slice(0, 8), pct, multiItem: true });
-                                await safeSendMessage(from, { text: m });
-                            } else if (sigProds && sigProds.length === 1) {
-                                const sp = sigProds[0];
-                                const spPrecio = parseFloat(sp.precio_minimo || 0) / pct;
-                                const spInfo = parseFloat(sp.stock_total || 0) <= 0 ? (parseFloat(sp.cantidad_fabricando || 0) > 0 ? "\n🏭 *EN FÁBRICA (Próximo a llegar)*" : "\n❌ *Sin existencia, solo información*") : "\n✅ *Disponible*";
-                                const spCaption = `📦 *CÓDIGO: ${sp.producto}*\n💰 *Precio: $${spPrecio.toFixed(2)} (Pagadero a tasa BCV)*${spInfo}\n📝 ${sp.descripcion}\n🔗 Ficha: https://one4cars.com/producto_general.php?cod=${sp.producto}&tipo=${encodeURIComponent(sp.tipo)}`;
-                                const spImg = `https://one4cars.com/imagen/${sp.producto}.jpg`;
-                                try { await socketBot.sendMessage(from, { image: { url: spImg }, caption: spCaption }); } catch (e) { await safeSendMessage(from, { text: spCaption }); }
-                                if (multiOrder.items.length > 0) {
-                                    // Más líneas, procesar la siguiente en el próximo mensaje
-                                    pendingProductSelection.set(from, { productos: [], pct, multiItem: true, waitingNext: true });
-                                    await safeSendMessage(from, { text: `✅ Producto mostrado. Quedan *${multiOrder.items.length} línea(s)*. Envíame el número del siguiente producto o escribe "siguiente" para continuar.` });
-                                } else {
-                                    pendingMultiItemOrder.delete(from);
-                                    await safeSendMessage(from, { text: `✅ *Pedido completado.* Revisa los productos mostrados arriba.` });
-                                }
-                            } else {
-                                await safeSendMessage(from, { text: `❌ No encontré "${sigDesc}". ${multiOrder.items.length > 0 ? 'Pasando al siguiente...' : ''}` });
-                                if (multiOrder.items.length > 0) {
-                                    // Re-intentar con la siguiente línea - pero para evitar loops, mostramos mensaje
-                                    pendingProductSelection.set(from, { productos: [], pct, multiItem: true, waitingNext: true });
-                                    await safeSendMessage(from, { text: `Quedan *${multiOrder.items.length} línea(s)*. Escribe "siguiente" para continuar.` });
-                                } else {
-                                    pendingMultiItemOrder.delete(from);
-                                }
-                            }
-                        } catch (e) {
-                            console.log("[MULTI-ITEM] Error procesando siguiente línea:", e.message);
-                            pendingMultiItemOrder.delete(from);
-                        }
-                    }
+                    return;
+                }
+            }
+            
+            // --- 1c. REMINDER/CANCEL FOR PENDING MULTI-ITEM ---
+            if (multiItemOrders.has(from)) {
+                if (text === 'cancelar') {
+                    multiItemOrders.delete(from);
+                    const psel = pendingProductSelection.get(from);
+                    if (psel && psel.multiItem) pendingProductSelection.delete(from);
+                    await safeSendMessage(from, { text: "❌ Pedido cancelado." });
+                    return;
+                }
+                if (!/^\d{1,2}$/.test(text)) {
+                    await safeSendMessage(from, { text: "⚠️ Tienes un pedido pendiente. Responde el *número* del producto, o escribe *cancelar*." });
                     return;
                 }
             }
 
-            // --- 2. DETECCIÓN INTELIGENTE DEL MENÚ ---
             // --- 2. DETECCIÓN INTELIGENTE DEL MENÚ ---
             const menuOption = detectarIntencionMenu(text);
             if (menuOption) {
@@ -1589,7 +1644,7 @@ async function startBot() {
                     listado += `💰 *TOTAL A PAGAR: $${totalP.toFixed(2)}*`;
                     return await safeSendMessage(from, { text: listado });
                 }
-                else if (menuOption.includes('Asesor Humano') && detectarVisita(rawText, text)) {
+                if (menuOption.includes('Asesor Humano') && detectarVisita(rawText, text)) {
                     let infoCliente = { nombres: pushName, celular: from.split('@')[0] };
                     if (sesion?.id_cliente_int) {
                         const c = await pool.execute("SELECT * FROM tab_clientes WHERE id_cliente = ?", [sesion.id_cliente_int]);
@@ -1618,7 +1673,7 @@ async function startBot() {
                     const respExtendida = `${menuOption}\n\n📅 *Nota:* Hemos detectado que solicitas una visita. La hemos agendado automáticamente para que un operador te contacte pronto.`;
                     return await safeSendMessage(from, { text: respExtendida });
                 }
-                else if (menuOption === 'VISITAS_HOY') {
+                if (menuOption === 'VISITAS_HOY') {
                     const hoyStr = new Date().toISOString().split('T')[0];
                     try {
                         const [vis] = await pool.execute("SELECT a.id_agenda, a.hora, c.nombres, c.celular, c.zona, c.direccion FROM tab_agenda_visitas a JOIN tab_clientes c ON a.id_cliente = c.id_cliente WHERE a.fecha = ? AND (a.estado IN ('pendiente','no_contesto','ausente','pospuso') OR a.estado IS NULL) ORDER BY c.zona, c.nombres", [hoyStr]);
@@ -1634,21 +1689,40 @@ async function startBot() {
                         return await safeSendMessage(from, { text: reporte });
                     } catch (e) {
                         console.log("[VISITAS HOY] Error:", e.message);
-                        return await safeSendMessage(from, { text: "❌ Error generando reporte de visitas." });
+                        return await safeSendMessage(from, { text: "❌ Error al obtener el reporte de visitas." });
                     }
                 }
-                // --- INICIO DE CORRECCIÓN ---
-                else {
-                    // Esto maneja todas las demás opciones (1, 3, 4, 5, 6, 7, 8) que no se estaban enviando.
-                    return await safeSendMessage(from, { text: menuOption });
-                }
-                // --- FIN DE CORRECCIÓN ---
+                return await safeSendMessage(from, { text: menuOption });
             }
+
             // --- 3. LÓGICA DE PAGOS ---
-            if (text === 'pago fact' || text === 'abono'  || text.includes('pago') || text.includes('al señor oscar') || text.includes('envié el pago') || text.includes('adjunto pago')) {
-                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
-                const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nRecibido tu mensaje, administración validará su pago a la brevedad.\n\n${MENU_TEXT}`;
-                return await safeSendMessage(from, { text: saludoCordial });
+            const MEDIOS_PAGO_KEYWORDS = ['envieme la cuenta', 'envíeme la cuenta', 'envieme el pago movil', 'envíeme el pago móvil', 'cual es su cuenta', 'cuál es su cuenta', 'cual es su pago movil', 'cuál es su pago móvil', 'numero de cuenta', 'número de cuenta', 'pago movil', 'pago móvil', 'medios de pago', 'cuenta para pagar', 'como puedo pagar', 'cómo puedo pagar', 'datos bancarios', 'datos de pago'];
+            const PAGAR_KEYWORDS = ['como hago para pagar', 'cómo hago para pagar', 'quiero pagar', 'envieme el vendedor por el pago', 'envíeme el vendedor por el pago', 'aca tengo el dinero', 'acá tengo el dinero', 'pago fact', 'abono', 'al señor oscar', 'envié el pago', 'adjunto pago'];
+            const esMediosPago = MEDIOS_PAGO_KEYWORDS.some(k => rawText.toLowerCase().includes(k) || text.includes(k));
+            const esPagarAhora = PAGAR_KEYWORDS.some(k => rawText.toLowerCase().includes(k) || text.includes(k)) || (text.includes('pago') && !esMediosPago);
+            let nombreCliente = vendedor ? vendedor.nombre : null;
+            if (!nombreCliente) {
+                const cliente = await buscarClientePorTelefono(from.split('@')[0]);
+                if (cliente) nombreCliente = cliente.nombres;
+            }
+            if (!nombreCliente) nombreCliente = pushName;
+            if (esMediosPago) {
+                const msg = `¡Hola *${nombreCliente}*! 😊
+
+Aquí tiene nuestros datos de pago:
+
+1️⃣ *Medios de pago:* https://www.one4cars.com/medios_de_pago.php/`;
+                return await safeSendMessage(from, { text: msg });
+            }
+            if (esPagarAhora) {
+                const msg = `¡Hola *${nombreCliente}*! 😊
+
+Hemos recibido su notificación de pago, administración lo validará a la brevedad.
+
+Mientras tanto, puede consultar el detalle de sus facturas pendientes aquí:
+
+2️⃣ *Estado de cuenta:* https://www.one4cars.com/estado_de_cuenta.php/`;
+                return await safeSendMessage(from, { text: msg });
             }
 
             if (text === 'factura fiscal'  || text.includes('factura con iva')  ) {
@@ -1931,7 +2005,18 @@ async function startBot() {
             // --- 5. LÓGICA DE PRODUCTOS MEJORADA ---
             const autoReplyFrasi = ['gracias por comunicarte', 'mensaje automático', 'auto-reply', 'automatic reply', 'soy un bot', 'soy el asistente', 'comunicarte con', 'en breve te atenderemo'];
             const esAutoReply = autoReplyFrasi.some(f => rawText.toLowerCase().includes(f));
-            if (!esAutoReply && text !== 'menu' && !['hola', 'buen dia', 'buenos dias'].includes(text)) {
+            if (!esAutoReply && !text.startsWith('menu') && !text.startsWith('hola') && !text.startsWith('buen')) {
+                // Multi-item detection
+                if (!multiItemOrders.has(from)) {
+                    const multiItems = parseMultiItemMessage(rawText);
+                    if (multiItems) {
+                        console.log(`[MULTI] Pedido de ${multiItems.length} items de ${from}`);
+                        const multiOrder = { items: multiItems, currentIndex: 0, resolvedItems: [], pct: null, vendedor: vendedor, pushName: pushName };
+                        multiItemOrders.set(from, multiOrder);
+                        await processNextMultiItem(from, multiOrder);
+                        return;
+                    }
+                }
                 try {
                     const palabrasEnMensaje = rawText.split(/\s+/);
                     const txtNormal = normalizar(rawText);
@@ -1972,16 +2057,8 @@ async function startBot() {
                                 const precio = parseFloat(p.precio_minimo || 0) / pct;
                                 msg += `\n*${i+1}.* ${p.producto} — *$${precio.toFixed(2)}*\n   ${p.descripcion.substring(0, 60)}${p.descripcion.length > 60 ? '...' : ''}`;
                             });
-                            // Verificar si hay más líneas en el mensaje original (pedido multi-item)
-                            const lineasResto = rawText.split('\n').filter(l => l.trim());
-                            const idxActual = lineasResto.findIndex(l => l.trim() === rawText.trim());
-                            const lineasPendientes = idxActual >= 0 ? lineasResto.slice(idxActual + 1) : [];
-                            if (lineasPendientes.length > 0) {
-                                msg += `\n\n🛒 *${lineasPendientes.length} línea(s) más* pendiente(s) de procesar.`;
-                                pendingMultiItemOrder.set(from, { items: lineasPendientes, results: [{ qty: cantidadPedido, producto: null, pendiente: true }], idx: 0 });
-                            }
                             msg += `\n\n📌 Responde el *número* del producto que necesitas.`;
-                            pendingProductSelection.set(from, { productos: prods.slice(0, 8), pct, multiItem: lineasPendientes.length > 0 });
+                            pendingProductSelection.set(from, { productos: prods.slice(0, 8), pct });
                             return await safeSendMessage(from, { text: msg });
                         }
                     }
@@ -2000,9 +2077,9 @@ async function startBot() {
                             if (parseFloat(p.stock_total || 0) <= 0) {
                                 const fab = parseFloat(p.cantidad_fabricando || 0);
                                 if (fab > 0) {
-                                    infoStock = "\n🏭 *EN FÁBRICA (Próximo a llegar)*";
+                                    infoStock = "\n🚚 *Sin existencia, en tránsito desde fábrica*";
                                 } else {
-                                    infoStock = "\n❌ *Sin existencia, solo información*";
+                                    infoStock = "";
                                 }
                             } else {
                                 infoStock = "\n✅ *Disponible*";
@@ -2053,50 +2130,86 @@ async function startBot() {
                 return await safeSendMessage(from, { text: msg });
             }
 
-            // --- 7. SALUDO Y MENÚ ---
-            const nombreUsuario = vendedor ? vendedor.nombre : pushName;
-            const esSaludo = text === 'menu' || text.startsWith('menu ') ||
-                             text === 'hola' || text.startsWith('hola ') || text.startsWith('hola,') ||
-                             text.startsWith('buen dia ') || text === 'buen dia' ||
-                             text.startsWith('buenos dias ') || text === 'buenos dias' ||
-                             text.startsWith('buenas tardes ') || text === 'buenas tardes' ||
-                             text.startsWith('buenas noches ') || text === 'buenas noches';
-            if (esSaludo) {
+            // --- 7. MENÚ (fallback) ---
+            if (text === 'menu' || text.startsWith('menu ')) {
+                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
+                return await safeSendMessage(from, { text: `¡Hola *${nombreUsuario}*! Es un gusto saludarle. 🙌\n\n¿En qué podemos ayudarle hoy? Indíquenos qué servicio necesita o consulte nuestro menú:\n\n${MENU_TEXT}` });
+            }
+            const nombreUsuario = nombreAlmacenado || nombreExtraido || (vendedor ? vendedor.nombre : null) || pushName || "Usuario";
+
+            if (nombreExtraido && !nombreAlmacenado) {
+                let datosActuales = {};
+                try { if (sesion?.datos) datosActuales = JSON.parse(sesion.datos); } catch(e) {}
+                if (!datosActuales.nombre_cliente) {
+                    datosActuales.nombre_cliente = nombreExtraido;
+                    await pool.execute(
+                        "INSERT INTO control_chat (telefono, datos, modo) VALUES (?, ?, 'bot') ON DUPLICATE KEY UPDATE datos = ?",
+                        [from, JSON.stringify(datosActuales), JSON.stringify(datosActuales)]
+                    );
+                }
+            }
+
+            const esSaludoFallback = text === 'menu' || text.startsWith('menu ') ||
+                                       text === 'hola' || text.startsWith('hola ') || text.startsWith('hola,') ||
+                                       text === 'saludo' || text.startsWith('saludo ') ||
+                                       text === 'saludos' || text.startsWith('saludos ') ||
+                                       text === 'buen dia' || text.startsWith('buen dia ') ||
+                                       text === 'buenos dias' || text.startsWith('buenos dias ') ||
+                                       text === 'buenas tardes' || text.startsWith('buenas tardes ') ||
+                                       text === 'buenas noches' || text.startsWith('buenas noches ') ||
+                                       text === 'buenas' || text.startsWith('buenas ') ||
+                                       text === 'que tal' || text.startsWith('que tal ') ||
+                                       text === 'qué tal' || text.startsWith('qué tal ');
+            if (esSaludoFallback) {
+                const mencionaJuan = text.includes('juan');
+                const mencionaJose = text.includes('jos');
                 const saludoBase = text.startsWith('buenas tardes') ? 'tarde' :
                                    text.startsWith('buenas noches') ? 'noche' :
                                    text.startsWith('buen') ? 'dia' : 'dia';
-                const respuestas = {
-                    'dia': `¡Buenos días, *${nombreUsuario}*! Dios le bendiga. Es un gusto tenerle por aquí. 🙏\n\n¿En qué podemos servirle el día de hoy? Aquí le ayudamos con mucho gusto.\n\n${MENU_TEXT}`,
-                    'tarde': `¡Buenas tardes, *${nombreUsuario}*! Un placer saludarle. Que tenga una bendecida tarde. 😊\n\n¿Cómo podemos ayudarle? Quedamos atentos a su solicitud.\n\n${MENU_TEXT}`,
-                    'noche': `¡Buenas noches, *${nombreUsuario}*! Dios le bendiga. Que descanse. 🌙\n\n¿En qué podemos ayudarle? Quedamos a la orden.\n\n${MENU_TEXT}`
-                };
+
                 if (text.startsWith('menu')) {
                     return await safeSendMessage(from, { text: `¡Hola *${nombreUsuario}*! Es un gusto saludarle. 🙌\n\n¿En qué podemos ayudarle hoy? Indíquenos qué servicio necesita o consulte nuestro menú:\n\n${MENU_TEXT}` });
+                } else if (mencionaJuan) {
+                    return await safeSendMessage(from, { text: `¡Buen${saludoBase === 'dia' ? 'os' : 'as'} ${saludoBase}, *${nombreUsuario}*! 🙌\n\n*Juan* no está disponible en este momento, pero yo puedo atenderle con todo gusto. Somos el mismo equipo ONE4CARS y estamos para servirle.\n\n¿En qué podemos ayudarle?\n\n${MENU_TEXT}` });
+                } else if (mencionaJose) {
+                    return await safeSendMessage(from, { text: `¡Buen${saludoBase === 'dia' ? 'os' : 'as'} ${saludoBase}, *${nombreUsuario}*! 🙌\n\n*José* no está disponible en este momento, pero yo puedo atenderle con todo gusto. Somos el mismo equipo ONE4CARS y estamos para servirle.\n\n¿En qué podemos ayudarle?\n\n${MENU_TEXT}` });
+                } else {
+                    const respuestas = {
+                        'dia': `¡Buenos días, *${nombreUsuario}*! Dios le bendiga. Es un gusto tenerle por aquí. 🙏\n\n¿En qué podemos servirle el día de hoy? Aquí le ayudamos con mucho gusto.\n\n${MENU_TEXT}`,
+                        'tarde': `¡Buenas tardes, *${nombreUsuario}*! Un placer saludarle. Que tenga una bendecida tarde. 😊\n\n¿Cómo podemos ayudarle? Quedamos atentos a su solicitud.\n\n${MENU_TEXT}`,
+                        'noche': `¡Buenas noches, *${nombreUsuario}*! Dios le bendiga. Que descanse. 🌙\n\n¿En qué podemos ayudarle? Quedamos a la orden.\n\n${MENU_TEXT}`
+                    };
+                    return await safeSendMessage(from, { text: respuestas[saludoBase] });
                 }
-                return await safeSendMessage(from, { text: respuestas[saludoBase] });
             }
             
             // --- 8. AGRADECIMIENTO ---
             const gratitudeWords = ['gracias', 'agradecid', 'agardecid', 'agradecimient'];
             if (gratitudeWords.some(w => text.includes(w))) {
-                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
+                const nombreAgradecimiento = nombreAlmacenado || nombreExtraido || (vendedor ? vendedor.nombre : null) || pushName || "Usuario";
                 const respuestas = [
-                    `¡Ha sido un placer atenderle, *${nombreUsuario}*! Que Dios le bendiga y quede muy pendiente cualquier cosita que necesite. Aquí estamos para servirle. 🙏`,
-                    `Un honor poder ayudarle, *${nombreUsuario}*. Que tenga un excelente día y cualquier cosita no dude en escribirnos. ¡Estamos a la orden! 🙌`,
-                    `Con mucho gusto, *${nombreUsuario}*, para eso estamos. Que Dios le bendiga grandemente y quede muy pendiente. ¡Aquí tiene su casa! 🏠`,
-                    `Gracias a usted, *${nombreUsuario}*, por su confianza. Es un privilegio poder atenderle. Que pase un bendecido día. 😊🙏`,
-                    `¡De nada, *${nombreUsuario}*! Con todo el gusto del mundo. Recuerde que estamos para servirle en lo que necesite. ¡Dios le bendiga! 🌟`
+                    `¡Ha sido un placer atenderle, *${nombreAgradecimiento}*! Que Dios le bendiga y quede muy pendiente cualquier cosita que necesite. Aquí estamos para servirle. 🙏`,
+                    `Un honor poder ayudarle, *${nombreAgradecimiento}*. Que tenga un excelente día y cualquier cosita no dude en escribirnos. ¡Estamos a la orden! 🙌`,
+                    `Con mucho gusto, *${nombreAgradecimiento}*, para eso estamos. Que Dios le bendiga grandemente y quede muy pendiente. ¡Aquí tiene su casa! 🏠`,
+                    `Gracias a usted, *${nombreAgradecimiento}*, por su confianza. Es un privilegio poder atenderle. Que pase un bendecido día. 😊🙏`,
+                    `¡De nada, *${nombreAgradecimiento}*! Con todo el gusto del mundo. Recuerde que estamos para servirle en lo que necesite. ¡Dios le bendiga! 🌟`
                 ];
                 const respuesta = respuestas[Math.floor(Math.random() * respuestas.length)];
                 return await safeSendMessage(from, { text: respuesta });
             }
 
-            // --- 9. FALLBACK ---
+            // --- 9. FALLBACK (respuesta para mensajes no reconocidos) ---
             const conversationalShorts = ['si', 'no', 'ok', 'vale', 'ya', 'entendido', 'bueno', 'dale', 'claro'];
             if (conversationalShorts.includes(text)) return; 
             if (rawText.length > 500) return;
 
-            return;
+            const nombreFallback = nombreAlmacenado || nombreExtraido || (vendedor ? vendedor.nombre : null) || pushName || "Usuario";
+            const fallbacks = [
+                `Disculpa, *${nombreFallback}*, no logré entender tu consulta. Por favor elige una opción del menú para poder ayudarte mejor. 🙏\n\n${MENU_TEXT}`,
+                `Hola *${nombreFallback}*, no pude procesar tu mensaje. ¿Podrías indicarme qué necesitas usando las opciones del menú? 😊\n\n${MENU_TEXT}`,
+                `*${nombreFallback}*, no tengo una respuesta para eso. Te invito a usar nuestro menú para que puedas consultar lo que necesites. 👇\n\n${MENU_TEXT}`
+            ];
+            return await safeSendMessage(from, { text: fallbacks[Math.floor(Math.random() * fallbacks.length)] });
         } catch (e) { console.log("[MSG] Error en handler de mensajes:", e.message); }
     });
 }
@@ -2174,38 +2287,11 @@ const server = http.createServer(async (req, res) => {
         });
     } else if (routename === '/reset-sesion') {
         try {
-            // También limpia el estado Bad MAC forzando reinicio completo
             if (fs.existsSync('auth_info')) {
                 fs.rmSync('auth_info', { recursive: true, force: true });
             }
-            if (socketBot) {
-                socketBot.end(undefined);
-                setTimeout(() => startBot(), 2000);
-            }
-            res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Sesión borrada</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="5;url=/"> </head><body class="bg-light"><div class="container mt-5 text-center"><div class="card shadow p-5 mx-auto" style="max-width:500px;border-radius:15px;"><h3>✅ Sesión borrada</h3><p class="mt-3">La carpeta <strong>auth_info</strong> se eliminó correctamente.</p><p>El bot se reconectará en <strong>2 segundos</strong>.</p><a href="/" class="btn btn-primary mt-3">Ir al inicio</a></div></div></body></html>`);
+            res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Sesión borrada</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="5;url=/"> </head><body class="bg-light"><div class="container mt-5 text-center"><div class="card shadow p-5 mx-auto" style="max-width:500px;border-radius:15px;"><h3>✅ Sesión borrada</h3><p class="mt-3">La carpeta <strong>auth_info</strong> se eliminó correctamente.</p><p>El bot mostrará un nuevo código QR en <strong>5 segundos</strong>.</p><a href="/" class="btn btn-primary mt-3">Ir al inicio</a></div></div></body></html>`);
         } catch (e) { res.end("Error al borrar sesión: " + e.message); }
-    } else if (routename === '/admin/mute') {
-        const phone = query.telefono || '';
-        if (!phone) { res.writeHead(400); return res.end("Falta ?telefono="); }
-        const jid = formatWhatsApp(phone);
-        if (jid) {
-            await setModo(jid, 'humano');
-            adminHumanChats.set(jid, Date.now());
-            console.log(`[WEB-MUTE] Admin silenció ${phone} → modo humano`);
-        }
-        res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
-        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Cliente silenciado</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="3;url=/"></head><body class="bg-light"><div class="container mt-5 text-center"><div class="card shadow p-5 mx-auto" style="max-width:500px;border-radius:15px;"><h3>🔇 Cliente silenciado</h3><p class="mt-3">El bot no responderá a <strong>${phone}</strong> durante las próximas 2 horas.</p><a href="/" class="btn btn-primary mt-3">Volver</a></div></div></body></html>`);
-    } else if (routename === '/admin/unmute') {
-        const phone = query.telefono || '';
-        if (!phone) { res.writeHead(400); return res.end("Falta ?telefono="); }
-        const jid = formatWhatsApp(phone);
-        if (jid) {
-            await setModo(jid, 'bot');
-            adminHumanChats.delete(jid);
-            console.log(`[WEB-UNMUTE] Admin reactivó ${phone} → modo bot`);
-        }
-        res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
-        res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Cliente reactivado</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><meta http-equiv="refresh" content="3;url=/"></head><body class="bg-light"><div class="container mt-5 text-center"><div class="card shadow p-5 mx-auto" style="max-width:500px;border-radius:15px;"><h3>🔊 Cliente reactivado</h3><p class="mt-3">El bot volverá a responder a <strong>${phone}</strong> automáticamente.</p><a href="/" class="btn btn-primary mt-3">Volver</a></div></div></body></html>`);
     } else if (routename === '/notificador-estado') {
 
         const filtroVendedorNotif = query.vendedor || '';
