@@ -13,7 +13,7 @@ process.on('unhandledRejection', (err) => {
     const msg = err?.message || err;
     console.log("[UNHANDLED] Error no capturado:", msg);
     if (msg === "Connection Closed" && socketBot) {
-        setTimeout(() => startBot(), 3000);
+        setTimeout(() => startBot(), 10000);
     }
 });
 process.on('uncaughtException', (err) => {
