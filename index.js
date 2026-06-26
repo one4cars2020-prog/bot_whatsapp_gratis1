@@ -139,7 +139,6 @@ const pendientesConfirmacion = new Map();
 const carritoCompras = new Map();
 const agendaVisitas = new Map();
 const pendingProductSelection = new Map();
-const multiItemOrders = new Map();
 
 const VISIT_KEYWORDS = [
     'me visite', 'me visiten', 'me visita', 'pase por', 'pasar por',
@@ -249,21 +248,6 @@ function normalizar(texto) {
         .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?!]/g, "") 
         .toLowerCase()
         .trim();
-}
-
-function extraerNombreDeSaludo(rawText) {
-    if (!rawText || rawText.trim().length < 3) return null;
-    const t = rawText.trim();
-    const m = t.match(/^(?:hola|saludos?|buenos?\s*(?:dias|día|tardes|noches)?|buenas|que tal|qué tal)\s+([A-Za-zÁÉÍÓÚáéíóúñÑüÜ]+(?:\s+[A-Za-zÁÉÍÓÚáéíóúñÑüÜ]+)?)/i);
-    if (m) {
-        let name = m[1].trim();
-        name = name.replace(/\s+(?:como|disculpa|disculpe|permiso|una|quisiera|necesito|queria|quería|te|le|les|me|puedes|podrias|podrías).*/i, '').trim();
-        name = name.replace(/[.,!?;:]+$/, '').trim();
-        if (name.length >= 2 && !/^\d+$/.test(name) && !['yo','tu','el','ella','ellos','nosotros','vosotros','esto','eso','aqui','alli','señor','señora','don','doña'].includes(name.toLowerCase())) {
-            return name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
-        }
-    }
-    return null;
 }
 
 function limpiarRIF(texto) {
@@ -814,7 +798,7 @@ async function buscarProductoPorTexto(texto) {
     });
 
     try {
-        const sql = `SELECT producto, descripcion, tipo, precio_minimo, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando FROM tab_productos WHERE activo = 'si' AND (COALESCE(cantidad_existencia,0) + COALESCE(cantidad_existencia_almacen,0) > 0 OR COALESCE(cantidad_fabricando,0) > 0) AND (${whereClause}) LIMIT 8`;
+        const sql = `SELECT producto, descripcion, tipo, precio_minimo, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando FROM tab_productos WHERE ${whereClause} LIMIT 8`;
         const [rows] = await pool.execute(sql, queryParams);
         if (rows.length > 0) return rows;
     } catch (e) {
@@ -841,7 +825,7 @@ async function buscarProductoPorTexto(texto) {
         const sqlRelevancia = `
             SELECT producto, descripcion, tipo, precio_minimo, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando
             FROM tab_productos 
-            WHERE activo = 'si' AND (COALESCE(cantidad_existencia,0) + COALESCE(cantidad_existencia_almacen,0) > 0 OR COALESCE(cantidad_fabricando,0) > 0) AND (${orConditions.join(" OR ")})
+            WHERE ${orConditions.join(" OR ")} 
             HAVING (${relevanceSQL}) >= ? 
             ORDER BY ${relevanceSQL} DESC 
             LIMIT 8`;
@@ -854,7 +838,7 @@ async function buscarProductoPorTexto(texto) {
 
     if (minRelevance > 1 && palabrasBase.length > 1) {
         try {
-            const sqlCatchall = `SELECT producto, descripcion, tipo, precio_minimo, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando FROM tab_productos WHERE activo = 'si' AND (COALESCE(cantidad_existencia,0) + COALESCE(cantidad_existencia_almacen,0) > 0 OR COALESCE(cantidad_fabricando,0) > 0) AND (${orConditions.join(" OR ")}) HAVING (${relevanceSQL}) >= 1 ORDER BY ${relevanceSQL} DESC LIMIT 8`;
+            const sqlCatchall = `SELECT producto, descripcion, tipo, precio_minimo, (cantidad_existencia + cantidad_existencia_almacen) as stock_total, cantidad_fabricando FROM tab_productos WHERE ${orConditions.join(" OR ")} HAVING (${relevanceSQL}) >= 1 ORDER BY ${relevanceSQL} DESC LIMIT 8`;
             const [rows] = await pool.execute(sqlCatchall, [...orParams]);
             if (rows.length > 0) return rows;
         } catch (e) {
@@ -863,98 +847,6 @@ async function buscarProductoPorTexto(texto) {
     }
 
     return null;
-}
-
-// ===== MULTI-ITEM ORDER FUNCTIONS =====
-
-function parseMultiItemMessage(rawText) {
-    if (!rawText || rawText.length < 10 || rawText.length > 1000) return null;
-    let text = rawText.replace(/\s+y\s+/gi, ',').trim();
-    const items = [];
-    const parts = text.split(/(?=\b\d{1,4}\s+[a-zA-ZáéíóúñüÁÉÍÓÚÑÜ])/);
-    for (const part of parts) {
-        const m = part.match(/^\s*(\d{1,4})\s+(.+)/);
-        if (m) {
-            let desc = m[2].trim().replace(/[,\s]+$/g, '').replace(/\s+y\s*$/i, '').trim();
-            if (desc.length > 2) {
-                items.push({ cantidad: parseInt(m[1]), descripcion: desc });
-            }
-        }
-    }
-    const txtNormal = normalizar(rawText);
-    const tieneKeyword = PRODUCT_KEYWORDS.some(kw => txtNormal.includes(kw));
-    return items.length >= 2 && tieneKeyword ? items : null;
-}
-
-async function processMultiItemProduct(from, item, multiOrder) {
-    const pct = await obtenerPorcentaje();
-    multiOrder.pct = pct;
-    const prods = await buscarProductoPorTexto(item.descripcion);
-    if (!prods || prods.length === 0) {
-        multiOrder.resolvedItems.push({ descripcion: item.descripcion, cantidad: item.cantidad, error: true, producto: null });
-        multiOrder.currentIndex++;
-        await processNextMultiItem(from, multiOrder);
-        return;
-    }
-    if (prods.length === 1) {
-        const p = prods[0];
-        const precio = parseFloat(p.precio_minimo || 0) / pct;
-        multiOrder.resolvedItems.push({ descripcion: item.descripcion, cantidad: item.cantidad, codigo: p.producto, tipo: p.tipo, precio: precio, producto: p, error: false });
-        multiOrder.currentIndex++;
-        await processNextMultiItem(from, multiOrder);
-        return;
-    }
-    let msg = `🔍 *Producto ${multiOrder.currentIndex + 1} de ${multiOrder.items.length}:* "${item.descripcion}"\n(Cantidad: ${item.cantidad})\n\n`;
-    prods.slice(0, 8).forEach((p, i) => {
-        const precio = parseFloat(p.precio_minimo || 0) / pct;
-        const stock = parseFloat(p.stock_total || 0);
-        let estado = stock > 0 ? "✅" : (parseFloat(p.cantidad_fabricando || 0) > 0 ? "🚚" : "❌");
-        msg += `*${i+1}.* ${p.producto} — *$${precio.toFixed(2)}* ${estado}\n   ${p.descripcion.substring(0, 55)}${p.descripcion.length > 55 ? '...' : ''}\n`;
-    });
-    msg += `\n📌 Responde el *número* del producto para este ítem.\n_O responde 0 para omitir_`;
-    pendingProductSelection.set(from, { productos: prods.slice(0, 8), pct, multiItem: true });
-    await safeSendMessage(from, { text: msg });
-}
-
-async function processNextMultiItem(from, multiOrder) {
-    if (multiOrder.currentIndex >= multiOrder.items.length) {
-        await showMultiItemQuotation(from, multiOrder);
-        return;
-    }
-    const item = multiOrder.items[multiOrder.currentIndex];
-    await processMultiItemProduct(from, item, multiOrder);
-}
-
-async function showMultiItemQuotation(from, multiOrder) {
-    const okItems = multiOrder.resolvedItems.filter(it => !it.error);
-    const errorItems = multiOrder.resolvedItems.filter(it => it.error);
-    if (okItems.length === 0) {
-        await safeSendMessage(from, { text: "❌ No se pudo identificar ningún producto de tu pedido. Intenta con descripciones más detalladas." });
-        multiItemOrders.delete(from);
-        return;
-    }
-    let gt = 0;
-    let msg = `📋 *COTIZACIÓN*\n`;
-    if (multiOrder.vendedor) msg += `👤 Vendedor: *${multiOrder.vendedor.nombre}*\n\n`;
-    msg += `💰 *Precios pagaderos a tasa BCV*\n\n`;
-    okItems.forEach(it => {
-        const t = it.precio * it.cantidad;
-        gt += t;
-        msg += `*${it.codigo}* - ${it.tipo || ''}\n   ${it.cantidad} und x $${it.precio.toFixed(2)} = *$${t.toFixed(2)}*\n\n`;
-    });
-    msg += `\n*TOTAL GENERAL: $${gt.toFixed(2)}*`;
-    if (errorItems.length > 0) {
-        msg += `\n\n⚠️ Productos no encontrados:\n`;
-        errorItems.forEach(it => { msg += `❌ "${it.descripcion}" (${it.cantidad} und)\n`; });
-    }
-    await safeSendMessage(from, { text: msg });
-    const dataConfirm = { items: okItems, vendedor: multiOrder.vendedor || null, pushName: multiOrder.pushName };
-    pendientesConfirmacion.set(from, dataConfirm);
-    await setSesionDatos(from, { tipo: 'confirmando', items: dataConfirm.items, vendedor: dataConfirm.vendedor, pushName: dataConfirm.pushName });
-    await setModo(from, 'confirmando');
-    await sleep(500);
-    await safeSendMessage(from, { text: `✅ *¿Desea confirmar este pedido?*\n\nResponda *SI* para confirmar o *NO* para cancelar.` });
-    multiItemOrders.delete(from);
 }
 
 async function obtenerDetalleFacturas(id_cliente, id_vendedor = null) {
@@ -1475,45 +1367,6 @@ async function startBot() {
                 }
             }
 
-            // --- 0. BIENVENIDA PRIMERA VEZ + SALUDO ---
-            if (!sesion) {
-                await guardarUsuario(from, pushName, 0);
-                const msg = `🎉 *¡Bienvenido a ONE4CARS, ${pushName}!* 🎉\n\nSomos *Juan* y *José*, sus asesores de confianza en autopartes. Estamos aquí para ayudarlo con todo lo que necesite, desde filtros y frenos hasta piezas especializadas.\n\n¿En qué podemos servirle el día de hoy?\n\n${MENU_TEXT}`;
-                await safeSendMessage(from, { text: msg });
-                return;
-            }
-
-            const esSaludo = text === 'menu' || text.startsWith('menu ') ||
-                             text === 'hola' || text.startsWith('hola ') || text.startsWith('hola,') ||
-                             text === 'buen dia' || text.startsWith('buen dia ') ||
-                             text === 'buenos dias' || text.startsWith('buenos dias ') ||
-                             text === 'buenas tardes' || text.startsWith('buenas tardes ') ||
-                             text === 'buenas noches' || text.startsWith('buenas noches ');
-
-            if (esSaludo) {
-                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
-                const mencionaJuan = text.includes('juan');
-                const mencionaJose = text.includes('jos');
-                const saludoBase = text.startsWith('buenas tardes') ? 'tarde' :
-                                   text.startsWith('buenas noches') ? 'noche' : 'dia';
-
-                if (text.startsWith('menu')) {
-                    await safeSendMessage(from, { text: `¡Hola *${nombreUsuario}*! Es un gusto saludarle. 🙌\n\n¿En qué podemos ayudarle hoy? Indíquenos qué servicio necesita o consulte nuestro menú:\n\n${MENU_TEXT}` });
-                } else if (mencionaJuan) {
-                    await safeSendMessage(from, { text: `¡Buen${saludoBase === 'dia' ? 'os' : 'as'} ${saludoBase}, *${nombreUsuario}*! 🙌\n\n*Juan* no está disponible en este momento, pero yo puedo atenderle con todo gusto. Somos el mismo equipo ONE4CARS y estamos para servirle.\n\n¿En qué podemos ayudarle?\n\n${MENU_TEXT}` });
-                } else if (mencionaJose) {
-                    await safeSendMessage(from, { text: `¡Buen${saludoBase === 'dia' ? 'os' : 'as'} ${saludoBase}, *${nombreUsuario}*! 🙌\n\n*José* no está disponible en este momento, pero yo puedo atenderle con todo gusto. Somos el mismo equipo ONE4CARS y estamos para servirle.\n\n¿En qué podemos ayudarle?\n\n${MENU_TEXT}` });
-                } else {
-                    const respuestas = {
-                        'dia': `¡Buenos días, *${nombreUsuario}*! Dios le bendiga. Es un gusto tenerle por aquí. 🙏\n\n¿En qué podemos servirle el día de hoy? Aquí le ayudamos con mucho gusto.\n\n${MENU_TEXT}`,
-                        'tarde': `¡Buenas tardes, *${nombreUsuario}*! Un placer saludarle. Que tenga una bendecida tarde. 😊\n\n¿Cómo podemos ayudarle? Quedamos atentos a su solicitud.\n\n${MENU_TEXT}`,
-                        'noche': `¡Buenas noches, *${nombreUsuario}*! Dios le bendiga. Que descanse. 🌙\n\n¿En qué podemos ayudarle? Quedamos a la orden.\n\n${MENU_TEXT}`
-                    };
-                    await safeSendMessage(from, { text: respuestas[saludoBase] });
-                }
-                return;
-            }
-
             // --- 1. LÓGICA DE RIF (ADMINISTRADORES) ---
             if (esRIFPuro) {
                 if (isAdmin) {
@@ -1548,28 +1401,6 @@ async function startBot() {
             const pendingSel = pendingProductSelection.get(from);
             if (pendingSel && /^\d{1,2}$/.test(text)) {
                 const idx = parseInt(text) - 1;
-                // Multi-item selection handling
-                if (pendingSel.multiItem) {
-                    const multiOrder = multiItemOrders.get(from);
-                    if (multiOrder) {
-                        if (idx >= 0 && idx < pendingSel.productos.length) {
-                            const p = pendingSel.productos[idx];
-                            const pct = pendingSel.pct;
-                            pendingProductSelection.delete(from);
-                            const precio = parseFloat(p.precio_minimo || 0) / pct;
-                            multiOrder.resolvedItems.push({ descripcion: multiOrder.items[multiOrder.currentIndex].descripcion, cantidad: multiOrder.items[multiOrder.currentIndex].cantidad, codigo: p.producto, tipo: p.tipo, precio: precio, error: false });
-                            multiOrder.currentIndex++;
-                            await processNextMultiItem(from, multiOrder);
-                        } else {
-                            pendingProductSelection.delete(from);
-                            multiOrder.resolvedItems.push({ descripcion: multiOrder.items[multiOrder.currentIndex].descripcion, cantidad: multiOrder.items[multiOrder.currentIndex].cantidad, error: true });
-                            multiOrder.currentIndex++;
-                            await processNextMultiItem(from, multiOrder);
-                        }
-                        return;
-                    }
-                }
-                // Original single-product selection
                 if (idx >= 0 && idx < pendingSel.productos.length) {
                     const p = pendingSel.productos[idx];
                     const pct = pendingSel.pct;
@@ -1578,7 +1409,7 @@ async function startBot() {
                     let infoStock = "";
                     if (parseFloat(p.stock_total || 0) <= 0) {
                         const fab = parseFloat(p.cantidad_fabricando || 0);
-                        infoStock = fab > 0 ? "\n🚚 *Sin existencia, en tránsito desde fábrica*" : "";
+                        infoStock = fab > 0 ? "\n🏭 *EN FÁBRICA (Próximo a llegar)*" : "\n❌ *Sin existencia, solo información*";
                     } else { infoStock = "\n✅ *Disponible*"; }
                     const caption = `📦 *CÓDIGO: ${p.producto}*\n💰 *Precio: $${precio.toFixed(2)} (Pagadero a tasa BCV)*${infoStock}\n📝 ${p.descripcion}\n🔗 Ficha: https://one4cars.com/producto_general.php?cod=${p.producto}&tipo=${encodeURIComponent(p.tipo)}`;
                     const imgUrl = `https://one4cars.com/imagen/${p.producto}.jpg`;
@@ -1587,21 +1418,6 @@ async function startBot() {
                     } catch (imgErr) {
                         await safeSendMessage(from, { text: caption });
                     }
-                    return;
-                }
-            }
-            
-            // --- 1c. REMINDER/CANCEL FOR PENDING MULTI-ITEM ---
-            if (multiItemOrders.has(from)) {
-                if (text === 'cancelar') {
-                    multiItemOrders.delete(from);
-                    const psel = pendingProductSelection.get(from);
-                    if (psel && psel.multiItem) pendingProductSelection.delete(from);
-                    await safeSendMessage(from, { text: "❌ Pedido cancelado." });
-                    return;
-                }
-                if (!/^\d{1,2}$/.test(text)) {
-                    await safeSendMessage(from, { text: "⚠️ Tienes un pedido pendiente. Responde el *número* del producto, o escribe *cancelar*." });
                     return;
                 }
             }
@@ -1679,33 +1495,10 @@ async function startBot() {
             }
 
             // --- 3. LÓGICA DE PAGOS ---
-            const MEDIOS_PAGO_KEYWORDS = ['envieme la cuenta', 'envíeme la cuenta', 'envieme el pago movil', 'envíeme el pago móvil', 'cual es su cuenta', 'cuál es su cuenta', 'cual es su pago movil', 'cuál es su pago móvil', 'numero de cuenta', 'número de cuenta', 'pago movil', 'pago móvil', 'medios de pago', 'cuenta para pagar', 'como puedo pagar', 'cómo puedo pagar', 'datos bancarios', 'datos de pago'];
-            const PAGAR_KEYWORDS = ['como hago para pagar', 'cómo hago para pagar', 'quiero pagar', 'envieme el vendedor por el pago', 'envíeme el vendedor por el pago', 'aca tengo el dinero', 'acá tengo el dinero', 'pago fact', 'abono', 'al señor oscar', 'envié el pago', 'adjunto pago'];
-            const esMediosPago = MEDIOS_PAGO_KEYWORDS.some(k => rawText.toLowerCase().includes(k) || text.includes(k));
-            const esPagarAhora = PAGAR_KEYWORDS.some(k => rawText.toLowerCase().includes(k) || text.includes(k)) || (text.includes('pago') && !esMediosPago);
-            let nombreCliente = vendedor ? vendedor.nombre : null;
-            if (!nombreCliente) {
-                const cliente = await buscarClientePorTelefono(from.split('@')[0]);
-                if (cliente) nombreCliente = cliente.nombres;
-            }
-            if (!nombreCliente) nombreCliente = pushName;
-            if (esMediosPago) {
-                const msg = `¡Hola *${nombreCliente}*! 😊
-
-Aquí tiene nuestros datos de pago:
-
-1️⃣ *Medios de pago:* https://www.one4cars.com/medios_de_pago.php/`;
-                return await safeSendMessage(from, { text: msg });
-            }
-            if (esPagarAhora) {
-                const msg = `¡Hola *${nombreCliente}*! 😊
-
-Hemos recibido su notificación de pago, administración lo validará a la brevedad.
-
-Mientras tanto, puede consultar el detalle de sus facturas pendientes aquí:
-
-2️⃣ *Estado de cuenta:* https://www.one4cars.com/estado_de_cuenta.php/`;
-                return await safeSendMessage(from, { text: msg });
+            if (text === 'pago fact' || text === 'abono'  || text.includes('pago') || text.includes('al señor oscar') || text.includes('envié el pago') || text.includes('adjunto pago')) {
+                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
+                const saludoCordial = `¡Hola *${nombreUsuario}*! Gracias por su mensaje. 😊\n\nRecibido tu mensaje, administración validará su pago a la brevedad.\n\n${MENU_TEXT}`;
+                return await safeSendMessage(from, { text: saludoCordial });
             }
 
             if (text === 'factura fiscal'  || text.includes('factura con iva')  ) {
@@ -1988,18 +1781,7 @@ Mientras tanto, puede consultar el detalle de sus facturas pendientes aquí:
             // --- 5. LÓGICA DE PRODUCTOS MEJORADA ---
             const autoReplyFrasi = ['gracias por comunicarte', 'mensaje automático', 'auto-reply', 'automatic reply', 'soy un bot', 'soy el asistente', 'comunicarte con', 'en breve te atenderemo'];
             const esAutoReply = autoReplyFrasi.some(f => rawText.toLowerCase().includes(f));
-            if (!esAutoReply && !text.startsWith('menu') && !text.startsWith('hola') && !text.startsWith('buen')) {
-                // Multi-item detection
-                if (!multiItemOrders.has(from)) {
-                    const multiItems = parseMultiItemMessage(rawText);
-                    if (multiItems) {
-                        console.log(`[MULTI] Pedido de ${multiItems.length} items de ${from}`);
-                        const multiOrder = { items: multiItems, currentIndex: 0, resolvedItems: [], pct: null, vendedor: vendedor, pushName: pushName };
-                        multiItemOrders.set(from, multiOrder);
-                        await processNextMultiItem(from, multiOrder);
-                        return;
-                    }
-                }
+            if (!esAutoReply && text !== 'menu' && !['hola', 'buen dia', 'buenos dias'].includes(text)) {
                 try {
                     const palabrasEnMensaje = rawText.split(/\s+/);
                     const txtNormal = normalizar(rawText);
@@ -2060,9 +1842,9 @@ Mientras tanto, puede consultar el detalle de sus facturas pendientes aquí:
                             if (parseFloat(p.stock_total || 0) <= 0) {
                                 const fab = parseFloat(p.cantidad_fabricando || 0);
                                 if (fab > 0) {
-                                    infoStock = "\n🚚 *Sin existencia, en tránsito desde fábrica*";
+                                    infoStock = "\n🏭 *EN FÁBRICA (Próximo a llegar)*";
                                 } else {
-                                    infoStock = "";
+                                    infoStock = "\n❌ *Sin existencia, solo información*";
                                 }
                             } else {
                                 infoStock = "\n✅ *Disponible*";
@@ -2113,69 +1895,39 @@ Mientras tanto, puede consultar el detalle de sus facturas pendientes aquí:
                 return await safeSendMessage(from, { text: msg });
             }
 
-            // --- 7. MENÚ (fallback) ---
-            if (text === 'menu' || text.startsWith('menu ')) {
-                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
-                return await safeSendMessage(from, { text: `¡Hola *${nombreUsuario}*! Es un gusto saludarle. 🙌\n\n¿En qué podemos ayudarle hoy? Indíquenos qué servicio necesita o consulte nuestro menú:\n\n${MENU_TEXT}` });
-            }
-            const nombreUsuario = nombreAlmacenado || nombreExtraido || (vendedor ? vendedor.nombre : null) || pushName || "Usuario";
-
-            if (nombreExtraido && !nombreAlmacenado) {
-                let datosActuales = {};
-                try { if (sesion?.datos) datosActuales = JSON.parse(sesion.datos); } catch(e) {}
-                if (!datosActuales.nombre_cliente) {
-                    datosActuales.nombre_cliente = nombreExtraido;
-                    await pool.execute(
-                        "INSERT INTO control_chat (telefono, datos, modo) VALUES (?, ?, 'bot') ON DUPLICATE KEY UPDATE datos = ?",
-                        [from, JSON.stringify(datosActuales), JSON.stringify(datosActuales)]
-                    );
-                }
-            }
-
-            const esSaludoFallback = text === 'menu' || text.startsWith('menu ') ||
-                                       text === 'hola' || text.startsWith('hola ') || text.startsWith('hola,') ||
-                                       text === 'saludo' || text.startsWith('saludo ') ||
-                                       text === 'saludos' || text.startsWith('saludos ') ||
-                                       text === 'buen dia' || text.startsWith('buen dia ') ||
-                                       text === 'buenos dias' || text.startsWith('buenos dias ') ||
-                                       text === 'buenas tardes' || text.startsWith('buenas tardes ') ||
-                                       text === 'buenas noches' || text.startsWith('buenas noches ') ||
-                                       text === 'buenas' || text.startsWith('buenas ') ||
-                                       text === 'que tal' || text.startsWith('que tal ') ||
-                                       text === 'qué tal' || text.startsWith('qué tal ');
-            if (esSaludoFallback) {
-                const mencionaJuan = text.includes('juan');
-                const mencionaJose = text.includes('jos');
+            // --- 7. SALUDO Y MENÚ ---
+            const nombreUsuario = vendedor ? vendedor.nombre : pushName;
+            const esSaludo = text === 'menu' || text.startsWith('menu ') ||
+                             text === 'hola' || text.startsWith('hola ') || text.startsWith('hola,') ||
+                             text.startsWith('buen dia ') || text === 'buen dia' ||
+                             text.startsWith('buenos dias ') || text === 'buenos dias' ||
+                             text.startsWith('buenas tardes ') || text === 'buenas tardes' ||
+                             text.startsWith('buenas noches ') || text === 'buenas noches';
+            if (esSaludo) {
                 const saludoBase = text.startsWith('buenas tardes') ? 'tarde' :
                                    text.startsWith('buenas noches') ? 'noche' :
                                    text.startsWith('buen') ? 'dia' : 'dia';
-
+                const respuestas = {
+                    'dia': `¡Buenos días, *${nombreUsuario}*! Dios le bendiga. Es un gusto tenerle por aquí. 🙏\n\n¿En qué podemos servirle el día de hoy? Aquí le ayudamos con mucho gusto.\n\n${MENU_TEXT}`,
+                    'tarde': `¡Buenas tardes, *${nombreUsuario}*! Un placer saludarle. Que tenga una bendecida tarde. 😊\n\n¿Cómo podemos ayudarle? Quedamos atentos a su solicitud.\n\n${MENU_TEXT}`,
+                    'noche': `¡Buenas noches, *${nombreUsuario}*! Dios le bendiga. Que descanse. 🌙\n\n¿En qué podemos ayudarle? Quedamos a la orden.\n\n${MENU_TEXT}`
+                };
                 if (text.startsWith('menu')) {
                     return await safeSendMessage(from, { text: `¡Hola *${nombreUsuario}*! Es un gusto saludarle. 🙌\n\n¿En qué podemos ayudarle hoy? Indíquenos qué servicio necesita o consulte nuestro menú:\n\n${MENU_TEXT}` });
-                } else if (mencionaJuan) {
-                    return await safeSendMessage(from, { text: `¡Buen${saludoBase === 'dia' ? 'os' : 'as'} ${saludoBase}, *${nombreUsuario}*! 🙌\n\n*Juan* no está disponible en este momento, pero yo puedo atenderle con todo gusto. Somos el mismo equipo ONE4CARS y estamos para servirle.\n\n¿En qué podemos ayudarle?\n\n${MENU_TEXT}` });
-                } else if (mencionaJose) {
-                    return await safeSendMessage(from, { text: `¡Buen${saludoBase === 'dia' ? 'os' : 'as'} ${saludoBase}, *${nombreUsuario}*! 🙌\n\n*José* no está disponible en este momento, pero yo puedo atenderle con todo gusto. Somos el mismo equipo ONE4CARS y estamos para servirle.\n\n¿En qué podemos ayudarle?\n\n${MENU_TEXT}` });
-                } else {
-                    const respuestas = {
-                        'dia': `¡Buenos días, *${nombreUsuario}*! Dios le bendiga. Es un gusto tenerle por aquí. 🙏\n\n¿En qué podemos servirle el día de hoy? Aquí le ayudamos con mucho gusto.\n\n${MENU_TEXT}`,
-                        'tarde': `¡Buenas tardes, *${nombreUsuario}*! Un placer saludarle. Que tenga una bendecida tarde. 😊\n\n¿Cómo podemos ayudarle? Quedamos atentos a su solicitud.\n\n${MENU_TEXT}`,
-                        'noche': `¡Buenas noches, *${nombreUsuario}*! Dios le bendiga. Que descanse. 🌙\n\n¿En qué podemos ayudarle? Quedamos a la orden.\n\n${MENU_TEXT}`
-                    };
-                    return await safeSendMessage(from, { text: respuestas[saludoBase] });
                 }
+                return await safeSendMessage(from, { text: respuestas[saludoBase] });
             }
             
             // --- 8. AGRADECIMIENTO ---
             const gratitudeWords = ['gracias', 'agradecid', 'agardecid', 'agradecimient'];
             if (gratitudeWords.some(w => text.includes(w))) {
-                const nombreAgradecimiento = nombreAlmacenado || nombreExtraido || (vendedor ? vendedor.nombre : null) || pushName || "Usuario";
+                const nombreUsuario = vendedor ? vendedor.nombre : pushName;
                 const respuestas = [
-                    `¡Ha sido un placer atenderle, *${nombreAgradecimiento}*! Que Dios le bendiga y quede muy pendiente cualquier cosita que necesite. Aquí estamos para servirle. 🙏`,
-                    `Un honor poder ayudarle, *${nombreAgradecimiento}*. Que tenga un excelente día y cualquier cosita no dude en escribirnos. ¡Estamos a la orden! 🙌`,
-                    `Con mucho gusto, *${nombreAgradecimiento}*, para eso estamos. Que Dios le bendiga grandemente y quede muy pendiente. ¡Aquí tiene su casa! 🏠`,
-                    `Gracias a usted, *${nombreAgradecimiento}*, por su confianza. Es un privilegio poder atenderle. Que pase un bendecido día. 😊🙏`,
-                    `¡De nada, *${nombreAgradecimiento}*! Con todo el gusto del mundo. Recuerde que estamos para servirle en lo que necesite. ¡Dios le bendiga! 🌟`
+                    `¡Ha sido un placer atenderle, *${nombreUsuario}*! Que Dios le bendiga y quede muy pendiente cualquier cosita que necesite. Aquí estamos para servirle. 🙏`,
+                    `Un honor poder ayudarle, *${nombreUsuario}*. Que tenga un excelente día y cualquier cosita no dude en escribirnos. ¡Estamos a la orden! 🙌`,
+                    `Con mucho gusto, *${nombreUsuario}*, para eso estamos. Que Dios le bendiga grandemente y quede muy pendiente. ¡Aquí tiene su casa! 🏠`,
+                    `Gracias a usted, *${nombreUsuario}*, por su confianza. Es un privilegio poder atenderle. Que pase un bendecido día. 😊🙏`,
+                    `¡De nada, *${nombreUsuario}*! Con todo el gusto del mundo. Recuerde que estamos para servirle en lo que necesite. ¡Dios le bendiga! 🌟`
                 ];
                 const respuesta = respuestas[Math.floor(Math.random() * respuestas.length)];
                 return await safeSendMessage(from, { text: respuesta });
