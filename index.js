@@ -11,22 +11,33 @@ const axios = require('axios');
 // CAPTURA GLOBAL DE ERRORES EVITA QUE EL BOT MUERA
 let badMacCount = 0;
 process.on('unhandledRejection', (err) => {
-    const msg = err?.message || err || '';
-    console.log("[UNHANDLED] Error no capturado:", typeof msg === 'string' ? msg.substring(0,200) : msg);
-    if (msg === "Connection Closed" && socketBot) {
+    // Convertimos el error a texto plano para asegurar que la lectura no falle
+    const msg = String(err?.message || err || '');
+    console.log("[UNHANDLED] Error no capturado:", msg.substring(0,200));
+    
+    if (msg.includes("Connection Closed") && socketBot) {
         setTimeout(() => startBot(), 3000);
     }
-    if (typeof msg === 'string' && (msg.includes('Bad MAC') || msg.includes('verifyMAC') || msg.includes('Session error'))) {
+    
+    // Detección agresiva del error criptográfico que tienes en tu log
+    if (msg.includes('Bad MAC') || msg.includes('verifyMAC') || msg.includes('Session error') || msg.includes('Failed to decrypt')) {
         badMacCount++;
-        console.log(`[UNHANDLED] Bad MAC detectado (#${badMacCount})`);
-        if (badMacCount > 5) {
-            console.log("[UNHANDLED] Demasiados Bad MAC, forzando limpieza...");
+        console.log(`[UNHANDLED] Desincronización de llaves detectada (#${badMacCount})`);
+        
+        // Reducimos el límite a 2 para que limpie la sesión rápido en lugar de quedarse colgado
+        if (badMacCount >= 2) {
+            console.log("[UNHANDLED] Llaves corruptas, forzando limpieza de auth_info...");
             badMacCount = 0;
             try {
                 const authDir = path.join(process.cwd(), 'auth_info');
                 if (fs.existsSync(authDir)) fs.rmSync(authDir, { recursive: true, force: true });
-            } catch (e) {}
-            if (socketBot) setTimeout(() => startBot(), 5000);
+            } catch (e) {
+                console.log("Error borrando auth_info:", e.message);
+            }
+            if (socketBot) {
+                try { socketBot.end(undefined); } catch(e){}
+                setTimeout(() => startBot(), 5000);
+            }
         }
     }
 });
