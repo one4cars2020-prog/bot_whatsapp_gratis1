@@ -37,7 +37,8 @@ const pool = mysql.createPool({
     database: 'juant200_venezon',
     waitForConnections: true,
     connectionLimit: 10,
-    queueLimit: 0
+    queueLimit: 0,
+    charset: 'utf8_spanish_ci'
 });
 const poolLocal = mysql.createPool({
     host: 'localhost',
@@ -46,7 +47,8 @@ const poolLocal = mysql.createPool({
     database: 'venezon',
     waitForConnections: true,
     connectionLimit: 5,
-    queueLimit: 0
+    queueLimit: 0,
+    charset: 'utf8_spanish_ci'
 });
 const dualExecute = async (sql, params) => {
     const r = await pool.execute(sql, params);
@@ -1444,10 +1446,13 @@ async function startBot() {
             const isAdmin = ADMIN_IDS.some(id => from.includes(id));
             const vendedor = await buscarVendedor(from, msg.pushName || "Vendedor");
 
-            if (msg.key.fromMe && textMe === '!bot') {
-                await setModo(from, 'bot');
-                await safeSendMessage(from, { text: "🤖 Bot reactivado para este chat." });
-                return;
+            if (msg.key.fromMe) {
+                const textMe = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").toLowerCase();
+                if (textMe === '!bot') {
+                    await setModo(from, 'bot');
+                    await safeSendMessage(from, { text: "🤖 Bot reactivado para este chat." });
+                    return;
+                }
             }
 
             const pushName = msg.pushName || "Usuario";
