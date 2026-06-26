@@ -1444,18 +1444,10 @@ async function startBot() {
             const isAdmin = ADMIN_IDS.some(id => from.includes(id));
             const vendedor = await buscarVendedor(from, msg.pushName || "Vendedor");
 
-            if (msg.key.fromMe) {
-                const textMe = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").toLowerCase();
-                if (textMe === '!bot') {
-                    await setModo(from, 'bot');
-                    await safeSendMessage(from, { text: "🤖 Bot reactivado para este chat." });
-                    return;
-                }
-                // Solo procesar fromMe si es auto-chat (admin hablando consigo mismo = con el bot)
-                const botOwnJid = socketBot?.user?.id?.split(':')[0] + '@s.whatsapp.net';
-                if (from !== botOwnJid) {
-                    return;
-                }
+            if (msg.key.fromMe && textMe === '!bot') {
+                await setModo(from, 'bot');
+                await safeSendMessage(from, { text: "🤖 Bot reactivado para este chat." });
+                return;
             }
 
             const pushName = msg.pushName || "Usuario";
@@ -1480,6 +1472,21 @@ async function startBot() {
             if (sesion && sesion.datos) {
                 try { const d = JSON.parse(sesion.datos); nombreAlmacenado = d.nombre_cliente || null; } catch(e) {}
             }
+
+            // Guardar nombre extraído para futuras conversaciones
+            if (nombreExtraido && !nombreAlmacenado) {
+                let datosActuales = {};
+                try { if (sesion?.datos) datosActuales = JSON.parse(sesion.datos); } catch(e) {}
+                if (!datosActuales.nombre_cliente) {
+                    datosActuales.nombre_cliente = nombreExtraido;
+                    await pool.execute(
+                        "INSERT INTO control_chat (telefono, datos, modo) VALUES (?, ?, 'bot') ON DUPLICATE KEY UPDATE datos = ?",
+                        [from, JSON.stringify(datosActuales), JSON.stringify(datosActuales)]
+                    );
+                    nombreAlmacenado = nombreExtraido;
+                }
+            }
+
             if (sesion && sesion.modo === 'humano' && !isAdmin) {
                 if (sesion.updated_at && (Date.now() - new Date(sesion.updated_at).getTime()) > REACTIVAR_BOT_MS) {
                     await setModo(from, 'bot');
