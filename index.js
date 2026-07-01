@@ -1815,6 +1815,26 @@ Mientras tanto, puede consultar el detalle de sus facturas pendientes aquí:
                     }
                 }
             }
+            // Fallback: escanear patrones cantidad+código en todo el texto (ignorando palabras extra)
+            if (itemsPedido.length === 0) {
+                const codePat1 = /(\d{1,4})\s+([A-Za-z]{2,}\d{2,})/g;
+                let match;
+                while ((match = codePat1.exec(rawText)) !== null) {
+                    const cod = match[2].toUpperCase();
+                    if (!itemsPedido.some(it => it.codigo === cod)) {
+                        itemsPedido.push({ codigo: cod, cantidad: parseInt(match[1]) });
+                    }
+                }
+                if (itemsPedido.length === 0) {
+                    const codePat2 = /([A-Za-z]{2,}\d{2,})\s+(\d{1,4})/g;
+                    while ((match = codePat2.exec(rawText)) !== null) {
+                        const cod = match[1].toUpperCase();
+                        if (!itemsPedido.some(it => it.codigo === cod)) {
+                            itemsPedido.push({ codigo: cod, cantidad: parseInt(match[2]) });
+                        }
+                    }
+                }
+            }
             const tieneMultiplesItems = itemsPedido.length >= 2;
             const tieneCantidadExplicita = itemsPedido.length === 1 && itemsPedido[0].cantidad !== 1;
             if (tieneMultiplesItems || tieneCantidadExplicita) {
