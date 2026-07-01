@@ -1527,7 +1527,13 @@ async function startBot() {
                              text === 'que tal' || text.startsWith('que tal ') ||
                              text === 'qué tal' || text.startsWith('qué tal ');
 
-            if (esSaludo) {
+            // Si el mensaje contiene pedido/cotización, no tratarlo como saludo
+            const esCotizar = /\bcotiza(?:r|me|íme)\b/i.test(rawText);
+            const tieneCodigosProducto = (rawText.match(/[A-Za-z]{2,}\d{2,}/g) || []).length > 0;
+            const tieneCantidadDescripcion = /\b\d{1,4}\s+[A-Za-zÁÉÍÓÚáéíóúñÑ]{4,}/.test(rawText);
+            const esPedidoProducto = esCotizar || tieneCodigosProducto || tieneCantidadDescripcion;
+
+            if (esSaludo && !esPedidoProducto) {
                 const nombreUsuario = nombreAlmacenado || nombreExtraido || (vendedor ? vendedor.nombre : null) || pushName || "Usuario";
                 const mencionaJuan = text.includes('juan');
                 const mencionaJose = text.includes('jos');
@@ -2038,7 +2044,7 @@ Mientras tanto, puede consultar el detalle de sus facturas pendientes aquí:
             // --- 5. LÓGICA DE PRODUCTOS MEJORADA ---
             const autoReplyFrasi = ['gracias por comunicarte', 'mensaje automático', 'auto-reply', 'automatic reply', 'soy un bot', 'soy el asistente', 'comunicarte con', 'en breve te atenderemo'];
             const esAutoReply = autoReplyFrasi.some(f => rawText.toLowerCase().includes(f));
-            if (!esAutoReply && !text.startsWith('menu') && !text.startsWith('hola') && !text.startsWith('buen')) {
+            if (!esAutoReply && !text.startsWith('menu')) {
                 // Multi-item detection
                 if (!multiItemOrders.has(from)) {
                     const multiItems = parseMultiItemMessage(rawText);
