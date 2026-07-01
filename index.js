@@ -1453,6 +1453,12 @@ async function startBot() {
                     await safeSendMessage(from, { text: "🤖 Bot reactivado para este chat." });
                     return;
                 }
+                // Solo procesar fromMe si es auto-chat (admin hablando consigo mismo)
+                const botPhone = (socketBot?.user?.id || '').split('@')[0].split(':')[0];
+                const fromPhone = from.split('@')[0].split(':')[0];
+                if (botPhone && botPhone !== fromPhone) {
+                    return;
+                }
             }
 
             const pushName = msg.pushName || "Usuario";
