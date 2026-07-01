@@ -1457,6 +1457,8 @@ async function startBot() {
                 const botPhone = (socketBot?.user?.id || '').split('@')[0].split(':')[0];
                 const fromPhone = from.split('@')[0].split(':')[0];
                 if (botPhone && botPhone !== fromPhone) {
+                    await setModo(from, 'humano');
+                    console.log(`[SILENT] Bot silenciado para ${from.split('@')[0]} (admin conversando con cliente)`);
                     return;
                 }
             }
@@ -1532,6 +1534,12 @@ async function startBot() {
             const tieneCodigosProducto = (rawText.match(/[A-Za-z]{2,}\d{2,}/g) || []).length > 0;
             const tieneCantidadDescripcion = /\b\d{1,4}\s+[A-Za-zÁÉÍÓÚáéíóúñÑ]{4,}/.test(rawText);
             const esPedidoProducto = esCotizar || tieneCodigosProducto || tieneCantidadDescripcion;
+
+            // Si es saludo con pedido, dar bienvenida a cotizaciones antes de procesar
+            if (esSaludo && esPedidoProducto) {
+                const nombreUsuario = nombreAlmacenado || nombreExtraido || (vendedor ? vendedor.nombre : null) || pushName || "Usuario";
+                await safeSendMessage(from, { text: `👋 ¡Bienvenido al sistema de cotizaciones de ONE4CARS, *${nombreUsuario}*! Estamos procesando su solicitud...` });
+            }
 
             if (esSaludo && !esPedidoProducto) {
                 const nombreUsuario = nombreAlmacenado || nombreExtraido || (vendedor ? vendedor.nombre : null) || pushName || "Usuario";
