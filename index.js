@@ -1473,7 +1473,11 @@ async function startBot() {
             let nombreExtraido = null;
             const nameMatch = rawText.match(/(?:hola|buenas|buen[ao]s?|soy|me llamo|mi nombre es|saludos?)\s+([A-Za-zÁÉÍÓÚáéíóúñÑ]{3,})/i);
             if (nameMatch) {
-                nombreExtraido = nameMatch[1].charAt(0).toUpperCase() + nameMatch[1].slice(1).toLowerCase();
+                const rawName = nameMatch[1].toLowerCase();
+                const skipWords = ['dias', 'día', 'tardes', 'noches', 'saludos', 'saludo', 'buenos', 'buenas', 'buen', 'como', 'que', 'tal'];
+                if (!skipWords.includes(rawName)) {
+                    nombreExtraido = nameMatch[1].charAt(0).toUpperCase() + nameMatch[1].slice(1).toLowerCase();
+                }
             }
             
             const textoLimpioParaRif = rawText.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
